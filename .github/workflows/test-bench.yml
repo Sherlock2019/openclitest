@@ -34,6 +34,8 @@ jobs:
       - uses: Sherlock2019/fullopenclitestbench@main
         with:
           mode: commands
+          environment_mode: kind
+          provider: openstack
           gitops_repository: git@github.com:Sherlock2019/opencenter-my-cluster-gitops.git
           gitops_kustomization_path: clusters/my-cluster/kustomization.yaml
           publish: >-
