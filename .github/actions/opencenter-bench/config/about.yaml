@@ -1,0 +1,120 @@
+# The three questions the console answers before it shows a single result.
+#
+# What we test is the checklist in checklist.yaml, rendered as a table.
+# Why we test is the list of goals below: the properties a person has to be
+# able to rely on. How we test is the method, stated plainly enough that
+# someone can decide whether to believe the numbers underneath it.
+
+what:
+  title: What we test
+  summary: >-
+    Thirty questions, each one something a person relies on when they run this
+    CLI on a real cluster. They are grouped from the first thing a new user
+    does — installing it — through to the last thing an operator checks: that
+    nothing was left behind. Every question below is answered by executing the
+    real binary, and every row shows what this run actually found.
+
+why:
+  title: Why we test
+  summary: >-
+    A command-line tool that provisions infrastructure is trusted twice over:
+    once by the person typing, and once by the pipeline that runs it
+    unattended at three in the morning. These are the seven properties that
+    trust rests on. Each checklist row exists to defend at least one of them.
+  goals:
+    - id: correct
+      name: Correct
+      meaning: The CLI does what the command says.
+      detail: >-
+        Not "returns zero" — actually produces the file, the configuration or
+        the cluster it claimed to. Every result check reads what landed on
+        disk rather than believing the message.
+    - id: safe
+      name: Safe
+      meaning: It does not damage infrastructure or expose secrets.
+      detail: >-
+        Dry-run changes nothing. Destroy asks first. Credentials never reach
+        a log, a generated file or an argument list. Nothing is written
+        outside the configuration root, whatever the input looks like.
+    - id: clear
+      name: Clear
+      meaning: Users understand success, failure and the next action.
+      detail: >-
+        An error names what went wrong and what to do about it. Help text is
+        complete. Warnings are on stderr where they belong, and results are on
+        stdout where a pipe can read them.
+    - id: automatable
+      name: Automatable
+      meaning: Scripts can trust exit codes and JSON output.
+      detail: >-
+        A documented exit code is a contract. JSON output parses, every time,
+        with no log line stirred into it. A failing command never exits zero.
+    - id: reliable
+      name: Reliable
+      meaning: It handles errors, retries, interruptions and repeated runs.
+      detail: >-
+        A rate-limited API is retried, an invalid configuration is not.
+        Ctrl-C stops the children too. Running the same command twice produces
+        the same result rather than a second copy of it.
+    - id: compatible
+      name: Compatible
+      meaning: It works across supported systems and versions.
+      detail: >-
+        Paths with spaces and Unicode survive. Permissions behave. A
+        configuration written by an earlier version still loads, and the
+        migration that updates it can be run twice.
+    - id: complete
+      name: Complete
+      meaning: The full workflow works from initialisation to cleanup.
+      detail: >-
+        Not command by command in isolation, but init to validate to generate
+        to deploy to status to destroy, each step handing real state to the
+        next, against a real cluster.
+
+how:
+  title: How we test
+  summary: >-
+    By running the real binary, in a world it cannot escape, against three
+    different far ends. No mocks inside the CLI, no stubbed functions, no
+    assertions on code that will not ship.
+  steps:
+    - name: The real executable, never a library call
+      detail: >-
+        Every check runs the compiled binary as a child process and reads its
+        stdout, its stderr and its actual exit code. What is measured is what
+        a user gets.
+    - name: A sandbox it cannot escape
+      detail: >-
+        Each run gets a throwaway HOME, configuration directory, state
+        directory and working directory. The environment is rebuilt from an
+        allowlist rather than filtered, so no cloud credential on the machine
+        can reach the process by accident, and nothing the CLI writes can
+        reach your real configuration.
+    - name: Three far ends, one set of questions
+      detail: >-
+        The same cloud checks run against a simulated OpenStack, against a
+        real FLEX project, and the same lifecycle runs against a local Kind
+        cluster. When a command passes in simulation and fails against FLEX,
+        the difference is real cloud behaviour rather than test scaffolding.
+    - name: Failures produced on purpose
+      detail: >-
+        The simulator can be told to return 401, 403, 409, 429, 500 or 503, to
+        answer with JSON that does not parse, or to stall until the client
+        gives up. These are the cases a healthy account will never show you
+        and a bad afternoon always will.
+    - name: Canaries, not hope
+      detail: >-
+        Unmistakable fake credentials are injected before each run and then
+        hunted for in every byte of output and every file on disk. If one turns
+        up, a real secret would have too.
+    - name: Verified from outside
+      detail: >-
+        A deployment is not believed because the CLI said so. kind, kubectl and
+        the OpenStack client are asked independently whether the cluster exists,
+        whether its nodes are ready, and — after a destroy — whether anything
+        was left behind.
+    - name: Gated where it costs something
+      detail: >-
+        Anything that creates a resource outliving a command refuses to run
+        without an explicit gate. The default run touches nothing but its own
+        sandbox and spends nothing.

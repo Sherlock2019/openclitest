@@ -1,0 +1,96 @@
+# The "OpenCenter : the big picture" panel at the top of the page.
+#
+# The table is transcribed from the digital-city diagram, and it is the same
+# metaphor the command table's "like building a city" column already uses.
+# Keeping it here rather than in the HTML means the two can be checked against
+# each other, and the wording is edited without touching the page.
+#
+# The diagram itself is a picture the bench does not ship. Drop it at
+#   docs/opencenter-city.png
+# and it appears above this table; without it the table stands on its own and
+# nothing is broken. See `image` below for the paths that are tried.
+
+title: "OpenCenter : the big picture"
+lead: >-
+  openCenter plans, deploys and supervises a Kubernetes platform the way a
+  command centre runs a city — from the ground it is built on to the events
+  moving between its services. Every command in the table below belongs
+  somewhere in this picture.
+
+# Tried in order; the first that exists is served. A missing file is not an
+# error, and the panel simply shows the table.
+image:
+  - docs/opencenter-city.png
+  - docs/opencenter-city.jpg
+  - docs/opencenter-city.webp
+image_alt: >-
+  openCenter as the command centre of a digital city: OpenStack as the land and
+  power, the CLI as the command tower, a GitOps repository as the blueprint
+  archive, Flux as the building inspector, Kubernetes as the city operating
+  system, and Kafka as the central postal sorting centre.
+
+components:
+  - n: 1
+    name: OpenStack / FLEX
+    metaphor: Land, power, roads
+    role: Provides the compute, network and storage foundation.
+  - n: 2
+    name: openCenter CLI
+    metaphor: Central command tower
+    role: Plans, controls and manages the whole city.
+  - n: 3
+    name: GitOps repo
+    metaphor: City blueprint archive
+    role: Stores the desired design in Git.
+  - n: 4
+    name: Flux CD
+    metaphor: Building inspector
+    role: Keeps the city aligned with the blueprint.
+  - n: 5
+    name: Kubernetes cluster
+    metaphor: City operating system
+    role: Runs and coordinates all services.
+  - n: 6
+    name: Control plane
+    metaphor: City hall
+    role: Makes decisions and manages the city districts.
+  - n: 7
+    name: Worker nodes
+    metaphor: Districts and buildings
+    role: Where apps and services run.
+  - n: 8
+    name: OLM
+    metaphor: Contractor licensing office
+    role: Installs platform operators.
+  - n: 9
+    name: Strimzi Operator
+    metaphor: Kafka operations team
+    role: Installs and manages Kafka.
+  - n: 10
+    name: Kafka
+    metaphor: Central postal sorting centre
+    role: Moves events between applications.
+  - n: 11
+    name: Topics
+    metaphor: Mail conveyor belts
+    role: Separate streams of messages.
+  - n: 12
+    name: Producers
+    metaphor: People sending mail
+    role: Applications publishing events.
+  - n: 13
+    name: Consumers
+    metaphor: People collecting mail
+    role: Applications reading events.
+  - n: 14
+    name: Persistent volumes
+    metaphor: Warehouses and archives
+    role: Keep data durable.
+  - n: 15
+    name: Apps / AI services
+    metaphor: Businesses and citizens
+    role: Use the platform and exchange events.
+  - n: 16
+    name: Monitoring / logs
+    metaphor: Cameras and city dashboards
+    role: Observe health and activity.

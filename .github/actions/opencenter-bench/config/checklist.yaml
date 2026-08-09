@@ -1,0 +1,254 @@
+# What the bench tests, one row per concern.
+#
+# This is the contract the whole bench is organised around. Every check in
+# internal/checks declares a `category` that must match an id below, and the
+# console shows coverage as this table with live results filled in. A category
+# with no checks is reported as a gap rather than quietly omitted.
+#
+# `environments` lists where a category can be answered at all. Some questions
+# only have an answer with a cloud on the far end.
+
+categories:
+  - id: installation
+    order: 1
+    name: Installation
+    question: Can users install and start the CLI?
+    looking_for: Binary runs, dependencies are present, command is in PATH.
+    example: opencenter --help works after installation
+    environments: [local, sim, flex, kind]
+
+  - id: commands
+    order: 2
+    name: Commands
+    question: Do all commands exist and work?
+    looking_for: Correct command, subcommand and flag behaviour.
+    example: opencenter cluster init, validate, generate, deploy
+    environments: [local, sim, flex, kind]
+
+  - id: arguments
+    order: 3
+    name: Arguments and flags
+    question: Does the CLI understand user input correctly?
+    looking_for: Required values, defaults, invalid flags and flag combinations.
+    example: --org, --type kind, --dry-run, --output json
+    environments: [local, sim, flex, kind]
+
+  - id: help
+    order: 4
+    name: Help and documentation
+    question: Can users understand how to use it?
+    looking_for: Clear help text, examples and no missing commands.
+    example: opencenter cluster deploy --help
+    environments: [local, sim, flex, kind]
+
+  - id: results
+    order: 5
+    name: Successful results
+    question: Does the command produce the expected result?
+    looking_for: Correct files, configuration, cluster resources and messages.
+    example: cluster init creates the correct YAML file
+    environments: [local, sim, flex, kind]
+
+  - id: errors
+    order: 6
+    name: Errors
+    question: Does it fail clearly and safely?
+    looking_for: Useful error message, correct exit code and recovery instructions.
+    example: Missing cluster returns a documented non-zero exit code
+    environments: [local, sim, flex, kind]
+
+  - id: output-formats
+    order: 7
+    name: Output formats
+    question: Can humans and automation read the output?
+    looking_for: Valid text, JSON and YAML output.
+    example: opencenter cluster list --output json
+    environments: [local, sim, flex, kind]
+
+  - id: streams
+    order: 8
+    name: stdout and stderr
+    question: Is output sent to the correct place?
+    looking_for: Results on stdout, errors on stderr.
+    example: JSON stays clean while warnings go to stderr
+    environments: [local, sim, flex, kind]
+
+  - id: configuration
+    order: 9
+    name: Configuration
+    question: Does it read the right configuration?
+    looking_for: Correct file location, defaults and precedence.
+    example: CLI flag overrides environment and config file
+    environments: [local, sim, flex, kind]
+
+  - id: files
+    order: 10
+    name: File handling
+    question: Are files created safely?
+    looking_for: Correct paths, permissions, atomic writes and cleanup.
+    example: Config cannot be written outside the openCenter directory
+    environments: [local, sim, flex, kind]
+
+  - id: security
+    order: 11
+    name: Security
+    question: Can secrets or commands be abused?
+    looking_for: No token leakage, path traversal or shell injection.
+    example: OpenStack secret never appears in debug logs
+    environments: [local, sim, flex, kind]
+
+  - id: authentication
+    order: 12
+    name: Authentication
+    question: Does login and credential handling work?
+    looking_for: Valid, missing, expired and unauthorised credentials.
+    example: OpenStack application credential returns a clear error
+    environments: [sim, flex]
+
+  - id: api
+    order: 13
+    name: API communication
+    question: Does the CLI call providers correctly?
+    looking_for: Correct endpoint, method, parameters, retries and timeouts.
+    example: OpenStack API 401, 429 and 503 handling
+    environments: [sim, flex]
+
+  - id: external-tools
+    order: 14
+    name: External tools
+    question: Does it use other tools correctly?
+    looking_for: Correct commands and safe handling of failures.
+    example: kubectl, kind, helm, tofu and sops
+    environments: [local, sim, flex, kind]
+
+  - id: dry-run
+    order: 15
+    name: Dry run
+    question: Can users preview changes safely?
+    looking_for: No files or infrastructure are changed.
+    example: opencenter cluster deploy --dry-run
+    environments: [local, sim, flex, kind]
+
+  - id: interactive
+    order: 16
+    name: Interactive prompts
+    question: Do confirmations behave correctly?
+    looking_for: Yes, no, Enter, Ctrl+C and non-interactive behaviour.
+    example: destroy must not continue after answering no
+    environments: [local, sim, flex, kind]
+
+  - id: cancellation
+    order: 17
+    name: Cancellation
+    question: What happens when the user stops a command?
+    looking_for: Child processes stop, locks clear and partial work is handled.
+    example: Ctrl+C during deployment does not leave a false success state
+    environments: [local, sim, flex, kind]
+
+  - id: retries
+    order: 18
+    name: Retries and recovery
+    question: Can temporary failures be handled?
+    looking_for: Limited retries, sensible delays and a clear final failure.
+    example: Retry an API timeout, but not invalid configuration
+    # Simulated only, and deliberately so. Answering this needs a far end that
+    # can be made to fail on demand; a healthy FLEX project will never return
+    # the 429 the question is about, and provoking one in a real tenant is not
+    # something a test should do.
+    environments: [sim]
+
+  - id: idempotency
+    order: 19
+    name: Idempotency
+    question: Is it safe to run the command again?
+    looking_for: No duplicate or corrupted resources.
+    example: Running generate twice produces the same repository
+    environments: [local, sim, flex, kind]
+
+  - id: lifecycle
+    order: 20
+    name: Lifecycle workflow
+    question: Does the complete user journey work?
+    looking_for: Each stage passes information correctly to the next.
+    example: init to validate to generate to deploy to status to destroy
+    environments: [local, sim, flex, kind]
+
+  - id: providers
+    order: 21
+    name: Provider support
+    question: Does each supported platform behave correctly?
+    looking_for: OpenStack, VMware, bare metal and Kind-specific validation.
+    example: Kind-only flags are rejected for OpenStack
+    environments: [local, sim, flex, kind]
+
+  - id: gitops
+    order: 22
+    name: Generated GitOps files
+    question: Are generated assets usable?
+    looking_for: Valid YAML, Terraform, Kubespray, Flux and Kustomize files.
+    example: Generated manifests pass syntax validation
+    environments: [local, sim, flex, kind]
+
+  - id: secrets
+    order: 23
+    name: Secrets management
+    question: Are secrets encrypted and recoverable?
+    looking_for: Encryption works, decryption works and plaintext is protected.
+    example: SOPS encrypt/decrypt returns the original secret
+    environments: [local, sim, flex, kind]
+
+  - id: plugins
+    order: 24
+    name: Plugins
+    question: Are plugins discovered and trusted safely?
+    looking_for: Valid checksum, no command collision and safe execution.
+    example: Modified plugin binary is rejected
+    environments: [local, sim, flex, kind]
+
+  - id: performance
+    order: 25
+    name: Performance
+    question: Is the CLI responsive?
+    looking_for: Fast startup, reasonable memory and no hanging.
+    example: opencenter --help opens quickly
+    environments: [local, sim, flex, kind]
+
+  - id: large-inputs
+    order: 26
+    name: Large inputs
+    question: Does it work with big environments?
+    looking_for: No crash or excessive slowdown.
+    example: Hundreds of nodes, services or clusters
+    environments: [local, sim, flex, kind]
+
+  - id: cross-platform
+    order: 27
+    name: Cross-platform behaviour
+    question: Does it work on supported systems?
+    looking_for: Linux and macOS paths, permissions and binaries work.
+    example: Paths with spaces and Unicode survive a round trip
+    environments: [local, sim, flex, kind]
+
+  - id: upgrade
+    order: 28
+    name: Upgrade compatibility
+    question: Do existing users survive an upgrade?
+    looking_for: Old configuration remains readable and migrates safely.
+    example: Configuration created by a previous build still loads
+    environments: [local, sim, flex, kind]
+
+  - id: real-environment
+    order: 29
+    name: Real environment
+    question: Does it work outside mocks?
+    looking_for: Real resources can be created, checked and removed.
+    example: Deploy and destroy a disposable Kind or OpenStack cluster
+    environments: [flex, kind]
+
+  - id: cleanup
+    order: 30
+    name: Cleanup
+    question: Does it leave the environment clean?
+    looking_for: No orphan resources, locks or temporary files.
+    example: Destroy removes test VMs, ports and state files
+    environments: [local, sim, flex, kind]

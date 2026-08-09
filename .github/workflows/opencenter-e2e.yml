@@ -71,7 +71,7 @@ jobs:
       # The repository under test, at the commit that triggered this run.
       - uses: actions/checkout@v7
 
-      - uses: Sherlock2019/fullopenclitestbench@main
+      - uses: ./.github/actions/opencenter-bench
         with:
           mode: lifecycle
           profile: ${{ matrix.profile }}

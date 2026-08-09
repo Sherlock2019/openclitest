@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: Sherlock2019/fullopenclitestbench@main
+      - uses: ./.github/actions/opencenter-bench
         with:
           mode: commands
           gitops_repository: git@github.com:Sherlock2019/opencenter-my-cluster-gitops.git

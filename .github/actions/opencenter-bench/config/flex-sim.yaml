@@ -1,0 +1,57 @@
+# The tenant the simulator serves.
+#
+# These are the shapes a real Rackspace FLEX project returns, with fabricated
+# identifiers. Edit them to reproduce a specific tenant, or to build a
+# situation you want the CLI to handle: a missing flavor, a network with no
+# subnet, a quota too small for the cluster being validated.
+
+project:
+  id: 49a2c18a567c402ef560bb0f11821b61
+  name: opencenter-lab
+  domain: rackspace_cloud_domain
+  region: IAD3
+  user: sim-user
+
+flavors:
+  - { id: "gp.5.2.4",   name: "gp.5.2.4",   vcpus: 2, ram: 4096,  disk: 40 }
+  - { id: "gp.5.4.8",   name: "gp.5.4.8",   vcpus: 4, ram: 8192,  disk: 80 }
+  - { id: "gp.5.4.16",  name: "gp.5.4.16",  vcpus: 4, ram: 16384, disk: 80 }
+  - { id: "gp.5.8.32",  name: "gp.5.8.32",  vcpus: 8, ram: 32768, disk: 160 }
+  - { id: "mem.5.4.32", name: "mem.5.4.32", vcpus: 4, ram: 32768, disk: 80 }
+
+images:
+  - { id: "799dcf97-3656-4361-8187-13ab1b295e33", name: "Ubuntu 22.04 LTS", status: active, size: 620000000 }
+  - { id: "b2f6d1a4-9c33-4e21-9a77-3f5c1e8b7d10", name: "Ubuntu 24.04 LTS", status: active, size: 640000000 }
+  - { id: "5c1e7a92-88d4-4b6f-9e02-77aa3c14bd58", name: "Debian 12",        status: active, size: 410000000 }
+
+networks:
+  - id: "0f4a2b91-5d3e-4c88-b7a1-9e2f6c30d445"
+    name: PUBLICNET
+    external: true
+    subnets: []
+  - id: "c7e91d38-2a64-4f19-8b53-1d0e7a92c611"
+    name: opencenter-lab-net
+    external: false
+    subnets: ["a91f7c02-6b48-4d33-9e17-52c8b0a4e739"]
+
+subnets:
+  - id: "a91f7c02-6b48-4d33-9e17-52c8b0a4e739"
+    name: opencenter-lab-subnet
+    cidr: 10.20.0.0/24
+    network_id: "c7e91d38-2a64-4f19-8b53-1d0e7a92c611"
+    gateway_ip: 10.20.0.1
+
+volume_types:
+  - { id: "8f2c1a55-3d09-4e72-b1c6-04a9e8d37b52", name: "SSD" }
+  - { id: "1b7e4d90-6c21-4a38-95f0-c3d8b2e6a147", name: "Standard" }
+
+availability_zones:
+  - nova
+  - iad3-a
+
+# Raise or lower these to see how validation reports insufficient quota.
+quota:
+  instances: 20
+  cores: 80
+  ram: 163840
+  volumes: 40

@@ -1,0 +1,87 @@
+# The four places the openCenter CLI can be put under test.
+#
+# `local` is the baseline and always runs: it needs nothing but the binary. The
+# other three answer the questions the baseline cannot — the ones that need a
+# cloud, or a real cluster, on the far end.
+#
+# cost:  none    nothing is spent, nothing outside the sandbox is touched
+#        minimal a real account is contacted, but only read from
+#        billed  real infrastructure is created and destroyed
+#
+# `mutating: true` means the environment can create things that outlive a
+# single command. Those environments refuse to run until OPENCLI_ALLOW_MUTATE=1
+# is set, so an accidental click cannot start a deployment.
+
+environments:
+  - id: local
+    order: 1
+    name: Local sandbox
+    short: local
+    summary: >-
+      The CLI alone, in a throwaway HOME with every credential stripped out of
+      the environment. Answers every question that does not need a far end:
+      installation, the command tree, flags, help, output contracts, exit
+      codes, configuration precedence, file safety, secrets, plugins, dry-run,
+      idempotency and cleanup.
+    cost: none
+    mutating: false
+    gate: null
+    requires: [go, opencenter]
+    duration_hint: 40s
+
+  - id: sim
+    order: 2
+    name: Simulated OpenStack
+    short: sim
+    summary: >-
+      A local server that speaks Keystone, Nova, Glance, Neutron, Cinder and
+      Swift. The CLI authenticates, discovers and validates for real — the same
+      code path, the same HTTP client, the same parsing — only the far end is
+      fabricated. Faults can be injected on demand, so 401, 403, 409, 429, 500,
+      503, malformed JSON and timeouts are all testable without an account.
+    cost: none
+    mutating: false
+    gate: null
+    requires: [go, opencenter]
+    duration_hint: 1m
+    notes: >-
+      Discovery and validation only. Provisioning is not simulated; use the
+      Kind or FLEX environments for a real lifecycle.
+
+  - id: flex
+    order: 3
+    name: Rackspace FLEX (real OpenStack)
+    short: flex
+    summary: >-
+      A real, connected OpenStack project. Read-only by default: authenticate,
+      discover the tenant inventory, sync it into a configuration and validate
+      online. With the mutation gate set it runs the full deploy, verify and
+      destroy cycle and then checks the account for orphaned servers, ports,
+      volumes, routers and security groups.
+    cost: minimal
+    cost_when_mutating: billed
+    mutating: true
+    gate: OPENCLI_ALLOW_MUTATE
+    requires: [go, opencenter, openstack-cli, clouds-yaml, os-auth]
+    duration_hint: 5m
+    notes: >-
+      Use a dedicated project with strict quotas. Never point this at a
+      production tenant.
+
+  - id: kind
+    order: 4
+    name: Kind (local Kubernetes)
+    short: kind
+    summary: >-
+      A real Kubernetes cluster in containers on this machine. The only free
+      environment that runs a genuine init to deploy to destroy lifecycle:
+      nodes really come up, kubectl really answers, and the destroy is checked
+      against the container runtime afterwards.
+    cost: none
+    mutating: true
+    gate: OPENCLI_ALLOW_MUTATE
+    requires: [go, opencenter, container-runtime, kind, kubectl]
+    duration_hint: 10m
+    notes: >-
+      Creates and deletes containers on this machine. Nothing leaves it, and
+      nothing is billed, but it is still a real mutation.

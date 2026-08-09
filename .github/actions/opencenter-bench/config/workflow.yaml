@@ -1,0 +1,169 @@
+# The continuous A-to-Z workflow.
+#
+# checklist.yaml says what each of the thirty questions is. This file says how
+# the workflow runs them: which phase they sit in, what has to be present
+# first, whether a failure stops everything, and whether the module touches
+# real infrastructure.
+#
+# The module order is the order in checklist.yaml and is not negotiable here —
+# a module cannot be moved for runtime convenience. Phases are a grouping for
+# the eye, not a reordering.
+
+phases:
+  - id: preflight
+    order: 0
+    name: Preflight and prerequisites
+    summary: >-
+      Check the machine, the tools, the credentials and the workspace. Nothing
+      is tested yet and nothing is created. The workflow refuses to start
+      Module 1 until every blocking check here passes.
+
+  - id: foundation
+    order: 1
+    name: CLI foundation
+    modules: [installation, commands, arguments, help, results, errors,
+              output-formats, streams, configuration, files]
+    summary: >-
+      Does the binary run, does it understand what it is told, does it say
+      what it did, and does it put things where it said it would.
+
+  - id: safety
+    order: 2
+    name: Safety, providers and integrations
+    modules: [security, authentication, api, external-tools, dry-run,
+              interactive, cancellation, retries, idempotency]
+    summary: >-
+      What happens when things go wrong, when someone is hostile, when the
+      network is not, and when the same command is run twice.
+
+  - id: lifecycle
+    order: 3
+    name: Full lifecycle and release
+    modules: [lifecycle, providers, gitops, secrets, plugins, performance,
+              large-inputs, cross-platform, upgrade, real-environment]
+    summary: >-
+      The whole user journey end to end, the assets it generates, and — with
+      approval — a real cluster that is really deployed and really destroyed.
+
+  - id: teardown
+    order: 4
+    name: Cleanup and report
+    modules: [cleanup]
+    summary: >-
+      Delete everything the run registered, then ask the environment whether
+      it is actually gone. Then write the report.
+
+# Per-module workflow properties. Anything not listed takes the defaults:
+# blocking false, live false, no extra prerequisites.
+#
+#   blocking      a failure stops the workflow rather than carrying on
+#   live          creates infrastructure; needs explicit approval
+#   requires      prerequisite ids from prerequisites.yaml
+#   estimate      seconds, used for the "estimated duration" figure
+modules:
+  installation:
+    blocking: true
+    requires: [opencenter]
+    estimate: 10
+    note: >-
+      Everything else is meaningless if the binary does not start, so this one
+      stops the workflow.
+
+  commands:
+    blocking: true
+    estimate: 25
+    note: A broken command tree makes every later module untrustworthy.
+
+  arguments:
+    estimate: 15
+  help:
+    estimate: 25
+  results:
+    estimate: 10
+    note: >-
+      Creates the primary fixture later modules work against. Deliberately not
+      blocking: the fixture is recreated on demand by whichever module needs it
+      first, so a failure here does not invalidate what comes after — and
+      stopping the run would hide twenty-five modules over one finding.
+  errors:
+    estimate: 10
+  output-formats:
+    estimate: 10
+  streams:
+    estimate: 5
+  configuration:
+    estimate: 10
+  files:
+    estimate: 10
+
+  security:
+    blocking: true
+    estimate: 30
+    note: A leak or an injection is not something to carry on past.
+  authentication:
+    estimate: 20
+  api:
+    estimate: 60
+  external-tools:
+    estimate: 15
+  dry-run:
+    estimate: 10
+  interactive:
+    estimate: 10
+  cancellation:
+    estimate: 40
+  retries:
+    estimate: 30
+  idempotency:
+    estimate: 20
+
+  lifecycle:
+    estimate: 20
+  providers:
+    estimate: 15
+  gitops:
+    estimate: 15
+  secrets:
+    requires: [sops, age]
+    estimate: 15
+  plugins:
+    estimate: 15
+  performance:
+    estimate: 10
+  large-inputs:
+    estimate: 60
+  cross-platform:
+    estimate: 10
+  upgrade:
+    estimate: 10
+
+  real-environment:
+    live: true
+    requires: [container-runtime, kind, kubectl]
+    estimate: 900
+    note: >-
+      The only module that creates something outliving a command. Locked until
+      the safety agreement is signed and the mutation gate is set.
+
+  cleanup:
+    blocking: true
+    estimate: 60
+    note: >-
+      Runs the resource registry in reverse, then asks the environment whether
+      each resource is actually gone. A delete that returned zero is not proof.
+
+# The confirmations a person has to give before any live module is unlocked.
+# All three are required; none of them defaults to checked.
+safety_agreement:
+  title: Live infrastructure test agreement
+  preamble: >-
+    This workflow may create and delete Kubernetes clusters, virtual machines,
+    networks and ports, volumes, Git branches and temporary secrets. It must
+    be pointed at a disposable environment.
+  confirmations:
+    - id: disposable
+      text: I confirm this is a disposable test environment.
+    - id: deletable
+      text: I confirm the test account can delete the resources it creates.
+    - id: cleanup
+      text: I approve automatic cleanup after the test.

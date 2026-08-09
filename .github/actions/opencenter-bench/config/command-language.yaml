@@ -1,0 +1,317 @@
+# Every command in two more languages.
+#
+# `plain` is what the command does, said the way you would say it to someone
+# who does not know the tool. Not the --help line reworded: --help says
+# "Initialize a new cluster configuration with default values", which already
+# assumes you know what a cluster configuration is.
+#
+# `metaphor` is the same thing as building a city. One consistent picture end
+# to end — you buy the land, you draw the plans, an inspector reads them, you
+# print the working drawings, you build, you run the place, and one day you
+# demolish it and prove the site is clear. A metaphor is worth having only if
+# it holds all the way through, so each stage owns a part of the story and
+# each command is a job within it.
+
+stages:
+  results:
+    plain: Read what broke, whose fault it is, and how to see it again.
+    metaphor: >-
+      The snagging list. Walk the finished building with a clipboard and write
+      down what is wrong, who has to fix each one, and where to stand to see
+      it — before anybody is asked to sign anything off.
+  prerequisites:
+    plain: Have the tools this all needs, before anything is started.
+    metaphor: >-
+      Before the plot is even bought: does the firm own a theodolite, a
+      digger and a licence to build? Every row here is that question about
+      one tool, and the answer costs nothing to ask.
+  init:
+    plain: Start a new cluster from nothing.
+    metaphor: >-
+      Buying the plot and registering it. Nothing is built yet — there is a
+      site with your name on it and a file at the town hall.
+  configure:
+    plain: Decide what the cluster contains.
+    metaphor: >-
+      Drawing the plans. How many buildings, how tall, which utilities are
+      connected. It is all paper, and paper is cheap to change.
+  validate:
+    plain: Check the plan is sound before anything is built.
+    metaphor: >-
+      The building inspector reads the drawings. Finding a fault here costs an
+      afternoon; finding it after the concrete has set costs a season.
+  generate:
+    plain: Turn the plan into the files that build it.
+    metaphor: >-
+      Printing the working drawings and the bill of materials, and handing
+      copies to the builders. Still nothing built — but now it is buildable.
+  deploy:
+    plain: Actually build the infrastructure.
+    metaphor: >-
+      The diggers arrive. From here the ground is really moved and the meter
+      is really running.
+  operate:
+    plain: Run and inspect the cluster that now exists.
+    metaphor: >-
+      Living in the city. Reading meters, keeping records, checking that what
+      was built still matches the plans, changing the locks.
+  teardown:
+    plain: Remove what was built, and prove it is gone.
+    metaphor: >-
+      Demolition, and the survey afterwards that proves the site is clear. An
+      empty lot with a forgotten cable still costs you rent.
+
+commands:
+  # --- init ---------------------------------------------------------------
+  "cluster init":
+    plain: Create a new cluster definition file, filled in with sensible defaults.
+    metaphor: Buy the plot and register the address.
+  "cluster import":
+    plain: Look at a cluster that already exists somewhere and learn its shape.
+    metaphor: Survey a site that was built before you arrived.
+  "cluster import scan":
+    plain: Read an existing GitOps repository and record what it describes.
+    metaphor: Walk the site with a clipboard and write down what is there.
+  "cluster import report":
+    plain: Show what that scan found, in readable form.
+    metaphor: Read the surveyor's report back at the office.
+  "cluster import apply":
+    plain: Turn what was found into a real openCenter configuration.
+    metaphor: File the survey as the official record of the plot.
+
+  # --- configure ----------------------------------------------------------
+  "cluster configure":
+    plain: Answer questions and have the configuration written for you.
+    metaphor: Sit with the architect and go through the plans room by room.
+  "cluster edit":
+    plain: Open the configuration in your editor and change it by hand.
+    metaphor: Take a pencil to the drawings yourself.
+  "cluster set":
+    plain: Change one named field without opening an editor.
+    metaphor: Amend a single measurement on one sheet of the plans.
+  "cluster normalize":
+    plain: Fill in fields the file is missing, using the defaults.
+    metaphor: Have the draughtsman complete the boxes left blank.
+  "cluster migrate-layout":
+    plain: Move an older directory layout to the current one.
+    metaphor: Refile the archive when the town hall changes its system.
+  "cluster pool":
+    plain: The group of commands for managing sets of worker machines.
+    metaphor: The section of the plans covering the residential blocks.
+  "cluster pool add":
+    plain: Add a new group of worker machines to the plan.
+    metaphor: Add another block of flats to the drawings.
+  "cluster pool list":
+    plain: Show the groups of workers the plan currently has.
+    metaphor: Read the index of blocks on the plan.
+  "cluster pool update":
+    plain: Change the settings of an existing worker group.
+    metaphor: Revise one block's specification — taller, or different windows.
+  "cluster pool scale":
+    plain: Change how many machines a worker group has.
+    metaphor: Change how many floors that block will have.
+  "cluster pool remove":
+    plain: Delete a worker group from the plan, once it is empty.
+    metaphor: Erase a block from the drawings, after checking nobody lives there.
+  "cluster service":
+    plain: The group of commands for turning cluster features on and off.
+    metaphor: The utilities schedule — water, power, lighting, waste.
+  "cluster service enable":
+    plain: Switch a feature on in the plan.
+    metaphor: Connect a utility to the plan.
+  "cluster service disable":
+    plain: Switch a feature off in the plan.
+    metaphor: Cut a utility out of the plan.
+  "cluster service options":
+    plain: Show every setting a feature accepts.
+    metaphor: Read the catalogue of what that utility can be specified as.
+  "cluster service status":
+    plain: Show which features are on and which are off.
+    metaphor: Check the utilities schedule at a glance.
+  "secrets set":
+    plain: Store a password or key that the cluster will need.
+    metaphor: Cut a key and put it in the safe before the doors are hung.
+  "settings edit":
+    plain: Open the CLI's own settings in your editor.
+    metaphor: Adjust your own desk and tools, not the city.
+  "settings set":
+    plain: Change one of the CLI's own settings by name.
+    metaphor: Move one tool on your own desk.
+
+  # --- validate -----------------------------------------------------------
+  "cluster validate":
+    plain: Check the configuration is complete and self-consistent.
+    metaphor: The inspector reads the plans and lists what is wrong.
+  "cluster doctor":
+    plain: Check your machine has the tools and access the job needs.
+    metaphor: Check the toolbox and the site pass before leaving for work.
+  "secrets validate":
+    plain: Check the secrets named in the configuration really exist and decrypt.
+    metaphor: Confirm every key on the schedule is in the safe and turns.
+  "secrets keys check":
+    plain: Check whether the encryption keys have expired.
+    metaphor: Check the dates on the keys before you rely on them.
+  "secrets keys validate":
+    plain: Check the encryption setup is correct and usable.
+    metaphor: Confirm the safe is fitted properly and its lock works.
+
+  # --- generate -----------------------------------------------------------
+  "cluster generate":
+    plain: Write out the manifests and terraform the plan describes.
+    metaphor: Print the working drawings and the bill of materials.
+  "cluster sync":
+    plain: The group of commands for reading real values back from a provider.
+    metaphor: Ring the utility companies for their actual reference numbers.
+  "cluster sync openstack":
+    plain: Read real OpenStack values and write them into the configuration.
+    metaphor: Copy the real meter numbers onto the plans, replacing your guesses.
+  "secrets encrypt":
+    plain: Encrypt the secret files so they can be committed safely.
+    metaphor: Lock the key cabinet before the drawings leave the office.
+  "secrets decrypt":
+    plain: Decrypt those files again so they can be read or changed.
+    metaphor: Unlock the cabinet when you need a key.
+  "secrets sync":
+    plain: Push the secrets from the configuration into the store that holds them.
+    metaphor: Deposit the cut keys with the building manager.
+  "secrets keys generate":
+    plain: Create a new encryption key pair.
+    metaphor: Have a new lock and key made.
+
+  # --- deploy -------------------------------------------------------------
+  "cluster deploy":
+    plain: Build the real infrastructure the configuration describes.
+    metaphor: Break ground. The diggers arrive and the money starts moving.
+
+  # --- operate ------------------------------------------------------------
+  "cluster":
+    plain: The group of commands for working with clusters.
+    metaphor: The city hall — every department is a door off this corridor.
+  "cluster list":
+    plain: Show every cluster this machine knows about.
+    metaphor: The register of properties you hold.
+  "cluster use":
+    plain: Choose which cluster the other commands act on.
+    metaphor: Take one property's file off the shelf and put it on your desk.
+  "cluster active":
+    plain: Say which cluster is currently chosen, and why.
+    metaphor: Check whose file is on your desk before you sign anything.
+  "cluster status":
+    plain: Show the health and state of a cluster.
+    metaphor: Walk the streets and see whether the lights are on.
+  "cluster describe":
+    plain: Show where a cluster's files, locks and state live.
+    metaphor: Read the deeds — where everything is filed, and who holds it.
+  "cluster export":
+    plain: Print the full configuration, with defaults filled in.
+    metaphor: Request a complete certified copy of the plans, nothing implied.
+  "cluster env":
+    plain: Print shell variables for a cluster, to paste or evaluate.
+    metaphor: Take the right keys and passes with you before going out.
+  "cluster lock":
+    plain: Mark a cluster so it cannot be changed by accident.
+    metaphor: Put the plans in a sealed case marked do not alter.
+  "cluster backup":
+    plain: The group of commands for copying a cluster's configuration aside.
+    metaphor: The records office in the basement.
+  "cluster backup create":
+    plain: Take a copy of the configuration as it is now.
+    metaphor: Photocopy today's plans and date the folder.
+  "cluster backup list":
+    plain: Show the copies that have been taken.
+    metaphor: Read the index of the records office.
+  "cluster backup restore":
+    plain: Put a previous copy back in place of the current one.
+    metaphor: Fetch an old folder and make it the official plan again.
+  "cluster backup delete":
+    plain: Remove one of those copies.
+    metaphor: Shred a folder you no longer need.
+  "cluster backup schedule":
+    plain: Arrange for copies to be taken regularly.
+    metaphor: Instruct the clerk to photocopy the plans every Friday.
+  "cluster drift":
+    plain: The group of commands for comparing the plan with reality.
+    metaphor: The surveyor who checks the city against the drawings.
+  "cluster drift detect":
+    plain: Report where the real cluster differs from the configuration.
+    metaphor: Walk the streets with the plans and mark what does not match.
+  "cluster drift reconcile":
+    plain: Change one to match the other, resolving those differences.
+    metaphor: Either correct the building or correct the drawing, and record which.
+  "cluster drift schedule":
+    plain: Arrange for that comparison to run regularly.
+    metaphor: Have the surveyor walk the streets every month.
+  "secrets":
+    plain: The group of commands for handling passwords and keys.
+    metaphor: The key cabinet, and everything to do with it.
+  "secrets list":
+    plain: Show which secrets a cluster has.
+    metaphor: Read the labels on the hooks in the key cabinet.
+  "secrets get":
+    plain: Fetch and decrypt one secret.
+    metaphor: Take one key off its hook.
+  "secrets describe":
+    plain: Show a secret's details without revealing its value.
+    metaphor: Read the label without taking the key.
+  "secrets delete":
+    plain: Remove a secret.
+    metaphor: Take the hook off the wall and destroy the key.
+  "secrets status":
+    plain: Show which files are encrypted and which are still readable.
+    metaphor: Check which cabinets are locked and which are standing open.
+  "secrets login":
+    plain: Obtain a token from the secret store so it will answer you.
+    metaphor: Sign the visitors book so the key room lets you in.
+  "secrets keys":
+    plain: The group of commands for managing encryption keys themselves.
+    metaphor: The locksmith's bench, not the keys hanging on the wall.
+  "secrets keys rotate":
+    plain: Replace the encryption keys and re-encrypt with the new ones.
+    metaphor: Change the locks, and reissue every key that opened the old ones.
+  "secrets keys revoke":
+    plain: Remove someone's key so it no longer opens anything.
+    metaphor: Cancel a departed keyholder's key at the lock.
+  "secrets keys backup":
+    plain: Copy the keys somewhere safe.
+    metaphor: Lodge a spare set with the solicitor.
+  "settings":
+    plain: The group of commands for the CLI's own settings.
+    metaphor: Your own desk and tools, not the city.
+  "settings view":
+    plain: Show all the CLI's settings.
+    metaphor: Look over your whole desk at once.
+  "settings get":
+    plain: Show one named setting.
+    metaphor: Pick up one tool and look at it.
+  "settings path":
+    plain: Print where the settings file lives.
+    metaphor: Say which drawer the desk key is in.
+  "settings explain":
+    plain: Explain what a setting actually changes.
+    metaphor: Read the manual for the tool before using it.
+  "settings explain cluster-defaults":
+    plain: Show each default a new cluster starts with, and where it comes from.
+    metaphor: Read the house style the draughtsman applies unless told otherwise.
+  "settings ide":
+    plain: Produce a schema so your editor can check the configuration.
+    metaphor: Fit the drawing board with a guide that catches crooked lines.
+  "plugins":
+    plain: Manage extra commands added to the CLI.
+    metaphor: The specialist contractors you can call in.
+  "shell-init":
+    plain: Print shell code that adds completion and helpers.
+    metaphor: Set your tools out the way you like them before starting work.
+  "version":
+    plain: Print which build of the CLI this is.
+    metaphor: Check the date stamp on your own toolbox.
+
+  # --- teardown -----------------------------------------------------------
+  "cluster destroy":
+    plain: Delete the real infrastructure this cluster created.
+    metaphor: Demolition. The buildings come down and the site is cleared.
+  "cluster unlock":
+    plain: Remove the mark that prevented changes.
+    metaphor: Break the seal on the case so the plans can be altered again.
+  "settings reset":
+    plain: Put the CLI's own settings back to their defaults.
+    metaphor: Clear your desk back to how it came.

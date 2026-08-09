@@ -1,0 +1,365 @@
+# The prerequisites stage: the quickstart list, and nothing more.
+#
+# This replaced a stage built from config/prerequisites.yaml, which listed
+# twenty-two items across five groups. That file is exhaustive because the
+# preflight panel needs it to be — it gates environments and has to know about
+# quota headroom and age keys. As a first screen it was the wrong shape: a
+# reader arriving at stage 0 does not need to know about SOPS recipients before
+# they have a binary to run.
+#
+# So the two are separated now. prerequisites.yaml still feeds the preflight
+# cards, unchanged. This file is the getting-started list, in the order somebody
+# would actually work through it, and it is deliberately short.
+#
+# Every step has a `check` that reads and a `setup` that fixes, and both have a
+# Run button. `risk` is derived from the setup text when it is not given.
+
+stage:
+  id: prerequisites
+  name: Prerequisites
+  before: init
+  colour: "#D1D1D6"
+  on_colour: "#1C1C1E"
+  summary: >-
+    Eight things, in the order you would do them. Run the check to see whether
+    you have it; run the setup beside it if you do not. Setup runs in your own
+    HOME inside WSL, not in the throwaway sandbox.
+
+steps:
+  - id: git
+    name: Git
+    detail: Version control
+    why: >-
+      Every GitOps operation openCenter performs uses Git. Version 2.x or
+      newer.
+    metaphor: >-
+      The city archive. Every change to the plans is recorded and can be traced
+      back to who drew it.
+    check: |
+      git --version
+    setup: |
+      # Debian / Ubuntu
+      sudo apt update && sudo apt install -y git
+
+      # macOS
+      # xcode-select --install
+
+  - id: ssh-key
+    name: SSH key
+    detail: For cluster access and for GitOps over SSH
+    why: >-
+      openCenter injects the public half into the nodes it provisions and uses
+      the private half to reach them. The same key authenticates a git remote.
+    metaphor: >-
+      The master key cut for the site gates, so the contractor can get in to do
+      the work.
+    check: |
+      ls -1 ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub 2>/dev/null | head -1 \
+        || { echo "no key found — run the setup beside this"; exit 1; }
+    setup: |
+      # Generate one if you do not have it. Change the comment to your address.
+      ssh-keygen -t ed25519 -C "your-email@example.com" -f ~/.ssh/id_ed25519 -N ""
+      cat ~/.ssh/id_ed25519.pub
+
+  - id: opencenter
+    name: Install openCenter CLI
+    detail: The binary this bench tests
+    why: >-
+      Initialises cluster configuration, validates it, generates the GitOps
+      repository and deploys the platform. Nothing else here can run without
+      it.
+    metaphor: >-
+      The general contractor. The one you are actually here to inspect.
+    inputs:
+      - env: OPENCLI_VERSION
+        label: Release
+        default: latest
+        help: latest, or a tag such as 1.0.0-rc03.
+      - env: OPENCLI_BRANCH
+        label: Branch (optional)
+        help: >-
+          Leave empty to install the release above. Enter a branch and it is
+          cloned and built instead — the only way to test something unreleased.
+      - env: OPENCLI_REPO
+        label: Repository (only used with a branch)
+        default: git@github.com:Sherlock2019/openCenter-cli-testDzoan.git
+        help: Point this at a fork to test one.
+    check: |
+      bin="${OPENCLI_BIN:-$HOME/.local/bin/opencenter}"
+      [ -x "$bin" ] || bin="$(command -v opencenter 2>/dev/null)"
+      test -x "$bin" && "$bin" version | head -3
+    # One line. The work — matching the release asset to this machine,
+    # verifying its checksum, or cloning and building a branch — lives in
+    # scripts/install-opencenter.sh.
+    #
+    # It was inline, and the card showed all hundred and thirty lines of it.
+    # That is the right amount of care and the wrong thing to put in front of
+    # somebody who just wants the tool: unreadable, uncheckable, and it hid
+    # which of its two paths applied to them.
+    setup: |
+      "$OPENCLI_BENCH_ROOT/scripts/install-opencenter.sh"
+
+  - id: mise
+    name: Mise
+    detail: Tool version manager and task runner
+    why: >-
+      Pins compatible versions of tools used by local-cluster and validation
+      workflows. The released openCenter CLI binary itself does not need Mise.
+    metaphor: >-
+      The tool crib. It hands out the right version of each tool, so two crews
+      never build to different standards.
+    check: |
+      command -v mise && mise --version
+    setup: |
+      # Linux
+      curl https://mise.run | sh
+      echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
+
+      # macOS
+      # brew install mise
+
+      # then, in a new shell:
+      mise --version
+
+  - id: infrastructure
+    name: Infrastructure access
+    detail: Choose one — OpenStack, Kind, vSphere or AWS
+    why: >-
+      Somewhere for a cluster to be built. Kind is the one that needs no cloud
+      account and no credentials, which is why the bench defaults to it.
+    metaphor: >-
+      The plot of land. You cannot build without one, and which one you pick
+      changes everything that follows.
+    # Reports which of the four is actually usable here rather than asking.
+    check: |
+      found=0
+      if [ -n "${OS_CLOUD:-}" ] || [ -f "${HOME}/.config/openstack/clouds.yaml" ]; then
+        echo "OpenStack: credentials present"; found=1
+      fi
+      if command -v kind >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        echo "Kind: kind and a container runtime are both present"; found=1
+      fi
+      if [ -n "${VSPHERE_SERVER:-}" ]; then echo "vSphere: VSPHERE_SERVER is set"; found=1; fi
+      if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then echo "AWS: credentials in the environment"; found=1; fi
+      [ "$found" = 1 ] || {
+        echo "none configured — Kind is the easiest: it needs Docker and no account"
+        exit 1
+      }
+    setup: |
+      # Kind — local development, no cloud account needed
+      sudo apt install -y docker.io
+      sudo usermod -aG docker "$USER"      # then log out and back in
+      mise install kind
+
+      # OpenStack / FLEX — recommended for a real deployment.
+      #   Enter the credentials in the panel above instead; the console
+      #   writes them to config/credentials.local.yaml at mode 0600.
+      # vSphere — set VSPHERE_SERVER, VSPHERE_USER, VSPHERE_PASSWORD.
+      # AWS — experimental.
+
+  - id: gitops-repo
+    name: GitOps repository
+    detail: Optional — where generated manifests are pushed
+    why: >-
+      Where `cluster generate` writes and Flux reconciles from. A local file://
+      path works for a test run and needs no account at all.
+    metaphor: >-
+      The archive the finished drawings are filed in. Everyone building reads
+      from it, so it has to exist before anything is drawn.
+    inputs:
+      - env: OPENCLI_GIT_PROVIDER
+        label: Git provider
+        kind: select
+        options: [github, gitlab, gitea, local]
+        default: local
+      - env: OPENCLI_GIT_REPOSITORY
+        label: GitOps repository URL
+        placeholder: file:///tmp/opencli-bench-gitops.git
+        default: file:///tmp/opencli-bench-gitops.git
+        help: >-
+          A file:// path needs no account and is the quickest way to see what
+          generation produces.
+      - env: OPENCLI_GIT_BRANCH
+        label: Branch
+        default: main
+      - env: OPENCLI_GIT_SSH_KEY
+        label: SSH key path
+        placeholder: ~/.ssh/id_ed25519
+        help: >-
+          Used for a git@ or ssh:// remote. Add the matching .pub to the
+          provider as a deploy key.
+      - env: OPENCLI_GIT_TOKEN
+        label: Write token
+        kind: secret
+        help: >-
+          Only for an https remote. An SSH remote uses the key above. Never
+          echoed back, and redacted from all output.
+    check: |
+      repo="${OPENCLI_GIT_REPOSITORY:-}"
+      if [ -z "$repo" ]; then
+        echo "OPENCLI_GIT_REPOSITORY is not set — a file:// path is fine for a test"
+        exit 1
+      fi
+      echo "repository: $repo"
+      case "$repo" in
+        file://*) echo "local repository: no credentials needed" ;;
+        *) git ls-remote "$repo" HEAD >/dev/null 2>&1 \
+             && echo "remote is reachable" \
+             || echo "remote is set but did not answer" ;;
+      esac
+    setup: |
+      # Simplest: a local repository, no account, nothing to authenticate.
+      export OPENCLI_GIT_REPOSITORY=file:///tmp/opencli-bench-gitops.git
+      git init --bare /tmp/opencli-bench-gitops.git 2>/dev/null || true
+
+      # Or your own on GitHub. This signs in through your browser; no token is
+      # ever typed here, and gh registers the SSH key above as a deploy key.
+      # gh auth login --hostname github.com --git-protocol ssh --web
+      # gh repo create opencenter-gitops --private
+
+  - id: cluster-identity
+    name: Cluster identity
+    detail: Organisation, cluster name, environment and provider
+    why: >-
+      Every command takes a cluster as org/name, and the configuration is
+      written under a path built from both. Decide them once, here. A cluster
+      is permanently associated with the organisation it was created under and
+      cannot be moved to another one, so the pairing is worth getting right
+      before anything else exists.
+    metaphor: >-
+      Registering the plot. Whose name is on the deeds, what the street address
+      is, and which district it sits in. It is filed once and does not move.
+    inputs:
+      - env: OPENCLI_ORG
+        label: Organisation name
+        default: myorg
+        help: >-
+          Permanent. A cluster cannot be moved to another organisation once
+          created.
+      - env: OPENCLI_CLUSTER
+        label: Cluster name
+        default: cluster1
+        help: Lowercase letters, digits and hyphens — it becomes a directory and a DNS label.
+      - env: OPENCLI_ENVIRONMENT
+        label: Environment
+        kind: select
+        options: [dev, staging, prod]
+        default: dev
+      - env: OPENCLI_PROVIDER
+        label: Target provider
+        kind: select
+        options: [openstack, kind, vsphere, baremetal, aws]
+        default: openstack
+    check: |
+      org="${OPENCLI_ORG:-myorg}"
+      cluster="${OPENCLI_CLUSTER:-cluster1}"
+      echo "organisation ${org}"
+      echo "cluster       ${cluster}"
+      echo "environment   ${OPENCLI_ENVIRONMENT:-dev}"
+      echo "provider      ${OPENCLI_PROVIDER:-openstack}"
+
+      config="$HOME/.config/opencenter/clusters/blueprints/${org}/${cluster}/${cluster}-config.yaml"
+      echo "config        ${config}"
+      if [ -f "$config" ]; then
+        echo "the configuration exists"
+      else
+        echo "not created yet — run the setup beside this"
+        exit 1
+      fi
+    # No `cluster init` here, deliberately.
+    #
+    # This step used to run one, and it created myorg/cluster1 — while every
+    # command in the table below acts on the environment's own cluster,
+    # testbench/tb-openstack. Two buttons creating two different clusters, with
+    # the commands using the one this step did not make. That is worse than
+    # having no button at all.
+    #
+    # The "Create the test cluster" button in the Environment section is the
+    # single place a cluster is created, because it is the only one that knows
+    # which environment is selected. This step decides the names and shows
+    # where they land.
+    setup: |
+      # These names are what the reference org/cluster is built from.
+      # Set them, then press "Create the test cluster" in the Environment
+      # section above — that is what actually creates it, using the cluster
+      # name of whichever environment tab is selected.
+      export OPENCLI_ORG="${OPENCLI_ORG:-myorg}"
+      export OPENCLI_CLUSTER="${OPENCLI_CLUSTER:-cluster1}"
+      export OPENCLI_PROVIDER="${OPENCLI_PROVIDER:-openstack}"
+
+      echo "organisation ${OPENCLI_ORG}"
+      echo "cluster      ${OPENCLI_CLUSTER}"
+      echo "provider     ${OPENCLI_PROVIDER}"
+      echo
+      echo "Now press 'Create the test cluster' in the Environment section."
+
+  - id: optional-services
+    name: Optional services
+    detail: Keycloak, Grafana, Headlamp, Harbor
+    why: >-
+      Enabled in the configuration and installed by FluxCD after deployment.
+      Each URL is derived from the cluster name and region. The ones with an
+      admin password will not pass validation until it is set, which is a
+      failure that otherwise arrives much later.
+    metaphor: >-
+      The utilities you ask for before the street is dug up. Cheap to add on
+      the plan, expensive to retrofit once the road is laid.
+    inputs:
+      - env: OS_REGION_NAME
+        label: Region
+        default: iad3
+        help: The service URLs are built from the cluster name and this.
+      - env: KEYCLOAK_ADMIN_PASSWORD
+        label: Keycloak admin password
+        kind: secret
+        help: Required before validate will pass, if Keycloak is enabled.
+      - env: GRAFANA_ADMIN_PASSWORD
+        label: Grafana admin password
+        kind: secret
+      - env: HARBOR_ADMIN_PASSWORD
+        label: Harbor admin password
+        kind: secret
+      - env: OPENCLI_SERVICE_URL_SUFFIX
+        label: URL suffix
+        default: k8s.opencenter.cloud
+        help: Headlamp needs no password; its URL is derived like the others.
+    check: |
+      org="${OPENCLI_ORG:-myorg}"
+      cluster="${OPENCLI_CLUSTER:-cluster1}"
+      region="${OS_REGION_NAME:-iad3}"
+
+      echo "URLs these would get:"
+      for service in auth grafana dashboard harbor; do
+        echo "  https://${service}.${cluster}.${region}.k8s.opencenter.cloud"
+      done
+      echo
+
+      bin="${OPENCLI_BIN:-$HOME/.local/bin/opencenter}"
+      [ -x "$bin" ] || bin="$(command -v opencenter)"
+      "$bin" cluster service status --cluster "${org}/${cluster}" 2>/dev/null \
+        || { echo "no cluster configuration yet — do step 7 first"; exit 1; }
+    setup: |
+      # All optional. Enable only what you want.
+      #
+      # Passwords are not written here. Put them in the credentials panel
+      # above, which stores them at mode 0600 in
+      # config/credentials.local.yaml and keeps them out of every log — a
+      # password typed on a command line is in your shell history and in ps.
+      org="${OPENCLI_ORG:-myorg}"
+      cluster="${OPENCLI_CLUSTER:-cluster1}"
+      ref="${org}/${cluster}"
+
+      bin="${OPENCLI_BIN:-$HOME/.local/bin/opencenter}"
+      [ -x "$bin" ] || bin="$(command -v opencenter)"
+
+      # Authentication. Needs an admin password before validate will pass.
+      "$bin" cluster service enable keycloak --cluster "$ref" \
+        --secret "admin_password=${KEYCLOAK_ADMIN_PASSWORD:?set it in the credentials panel}"
+
+      # Monitoring, dashboard and registry.
+      "$bin" cluster service enable kube-prometheus-stack --cluster "$ref"
+      "$bin" cluster service enable headlamp --cluster "$ref"
+      "$bin" cluster service enable harbor --cluster "$ref" \
+        --secret "admin_password=${HARBOR_ADMIN_PASSWORD:?set it in the credentials panel}"
+
+      "$bin" cluster service status --cluster "$ref"

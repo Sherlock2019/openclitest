@@ -1,0 +1,52 @@
+# Five phases over the eleven stages.
+#
+# Two audiences, one page. A manager wants to know whether the pipeline is green
+# and where it stopped; an engineer wants the command that failed and its stderr.
+# Showing eleven stages to the first is noise, and showing five to the second
+# hides the thing they came for.
+#
+# So the rail groups the stages into phases and expands. Nothing is removed —
+# every stage is still reachable, still runs, still reports — and the default
+# view is five rows instead of eleven.
+#
+# The grouping lives here rather than in the page because it is a judgement about
+# what belongs together, and judgements belong in a file somebody can argue with.
+#
+# Deploy has no stages of its own on purpose. Flux does that, after a human
+# merges the pull request, and the bench has no part in it. It appears in the
+# rail so the picture is complete and is marked as somebody else's work — a
+# pipeline diagram that stops at "pull request opened" leaves the reader
+# wondering what happens next.
+
+phases:
+  - id: build
+    name: Build
+    detail: Have the tools, and have the binary under test.
+    stages: [prerequisites]
+    owner: bench
+
+  - id: test
+    name: Test
+    detail: Run the lifecycle against the build, from nothing to a running cluster.
+    stages: [init, configure, validate, generate, deploy, operate, kafka]
+    owner: bench
+
+  - id: verify
+    name: Verify
+    detail: Read what broke and whose fault it is, then prove nothing was left behind.
+    stages: [results, teardown]
+    owner: bench
+
+  - id: publish
+    name: Publish
+    detail: Record the approved version as a pull request. Never merged here.
+    stages: [github-actions-gitops]
+    owner: bench
+
+  - id: deploy
+    name: Deploy
+    detail: >-
+      Flux reconciles the merged state. The bench has no part in this, and it is
+      shown so the picture does not stop at "pull request opened".
+    stages: []
+    owner: flux

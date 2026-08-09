@@ -1,0 +1,1007 @@
+# The Test Bench, as a GitHub Action.
+#
+# This is what makes the bench usable from somewhere else. The workflow in
+# .github/workflows/ runs it in this repository; this file lets any other
+# repository — a GitOps repository in particular — call it:
+#
+#   - uses: Sherlock2019/opencenterclitest-Simple@main
+#     with:
+#       opencenter_cli_ref: my-feature-branch
+#       gitops_kustomization_path: clusters/my-cluster/kustomization.yaml
+#
+# A composite action rather than a Docker one, deliberately. Docker would pin a
+# Go toolchain and an image build into the action and cost a pull on every run;
+# composite uses the caller's runner, so the bench is tested against the same Go
+# the caller has and there is nothing to publish before this works.
+#
+# What it does not do, and cannot be made to do from here: merge a pull request,
+# apply anything to a cluster, or trigger Flux. The outputs let the caller decide.
+
+name: openCenter CLI Test Bench
+description: >-
+  Test an openCenter CLI build end to end, then optionally propose a GitOps
+  update as a pull request. Never merges and never deploys.
+author: opencenter-cloud
+
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  # Which of the two benches to run.
+  #
+  #   commands   every CLI command, on every environment, judged   (the default)
+  #   lifecycle  the twenty-one-phase cluster lifecycle: build with mise, stand
+  #              a cluster up, prove it healthy, take it down, prove nothing is
+  #              left behind
+  #
+  # One action rather than two, because everything before the run is identical:
+  # stage the bench from the action's own directory, build it, resolve and check
+  # out the CLI, build that. Only the last step differs, and a second action
+  # would have been a second copy of all of it.
+  mode:
+    description: commands (default) or lifecycle
+    required: false
+    default: commands
+  # Lifecycle phases to leave out, comma-separated. Ignored in commands mode.
+  #
+  # Written by the console when somebody chooses stages under "What to test".
+  # Empty is the whole lifecycle, which is what it should stay for anything
+  # judging a build: every phase left out is a question the run stops asking.
+  skip_phases:
+    description: >-
+      Comma-separated lifecycle phases to skip, for example
+      kubernetes-health,platform-health. Empty runs all of them. Required
+      phases refuse to be skipped whatever is named here.
+    required: false
+    default: ""
+  # Which combination the lifecycle runs. Ignored in commands mode.
+  profile:
+    description: >-
+      Lifecycle profile: configuration-only, openstack-emulated,
+      vmware-emulated, baremetal-emulated, kind, or a *-real profile. The real
+      ones additionally require approve_live.
+    required: false
+    default: configuration-only
+  approve_live:
+    description: >-
+      Required by the real-provider profiles, which create infrastructure that
+      costs money. Anything but "true" leaves them refused.
+    required: false
+    default: "false"
+  destroy_after_test:
+    description: Destroy the environment when the lifecycle finishes
+    required: false
+    default: "true"
+  timeout:
+    description: Whole-run deadline for the lifecycle, e.g. 60m
+    required: false
+    default: 60m
+
+  # ---- what to test -------------------------------------------------------
+  opencenter_cli_repository:
+    description: >-
+      Repository to test. Leave blank — the default — and it tests the
+      repository whose workflow called this action, which is what almost every
+      caller wants. Set it only to test a different repository, such as a fork.
+      owner/name, an https:// URL or an ssh remote are all accepted and
+      normalised to owner/name, the only form actions/checkout takes.
+    required: false
+    # Blank, not a repository name. A concrete default here is a trap: a repo
+    # that adds this action with no inputs would silently test somebody else's
+    # CLI and report a green tick about code it never looked at.
+    default: ""
+  opencenter_cli_ref:
+    description: Branch, tag or commit of the CLI to test
+    required: false
+    default: main
+  opencenter_cli_token:
+    description: Token for a private CLI repository. Omit for a public one.
+    required: false
+    default: ""
+
+  # ---- how to test it -----------------------------------------------------
+  environment_mode:
+    description: real, kind or emulated
+    required: false
+    default: emulated
+  provider:
+    description: openstack, vmware, baremetal or kind
+    required: false
+    default: openstack
+  allow_warnings:
+    description: Treat a warning-only run as promotable
+    required: false
+    default: "false"
+
+  # ---- where to propose the update ---------------------------------------
+  gitops_repository:
+    description: >-
+      GitOps repository to update. Defaults to the repository calling this
+      action, which is the common case when it is called from a GitOps repo.
+    required: false
+    default: ""
+  gitops_base_branch:
+    description: Branch the pull request targets
+    required: false
+    default: main
+  gitops_manifest_path:
+    description: Deployment manifest to update. Leave blank when using a Kustomization.
+    required: false
+    default: ""
+  gitops_kustomization_path:
+    description: Kustomization file to update
+    required: false
+    default: ""
+  gitops_container_name:
+    description: Container name inside a Deployment
+    required: false
+    default: test-bench
+  gitops_image_repository:
+    description: Container image repository
+    required: false
+    default: ghcr.io/sherlock2019/opencenter-cli-test-bench
+  gitops_image_tag:
+    description: Immutable tag. Blank uses sha-<commit>. `latest` is refused.
+    required: false
+    default: ""
+
+  # ---- what it is allowed to do ------------------------------------------
+  publish:
+    description: >-
+      Push a branch and open a pull request. Requires gitops_token. Anything
+      other than "true" runs in preview: the diff is produced and nothing
+      leaves the runner.
+    required: false
+    default: "false"
+  gitops_token:
+    description: >-
+      Token with contents:write and pull-requests:write on the GitOps
+      repository. Only needed when publish is true. Never echoed.
+    required: false
+    default: ""
+  gitops_ssh_key:
+    description: >-
+      Private deploy key, when gitops_repository is an ssh remote
+      (git@github.com:owner/name.git). An ssh remote cannot authenticate with a
+      token, so without this a run using one fails at clone. Opening the pull
+      request still needs gitops_token — the API has no ssh equivalent.
+    required: false
+    default: ""
+  registry_token:
+    description: >-
+      Token for pushing the image to the registry. Defaults to gitops_token,
+      then to the job's github.token, which is what ghcr.io wants when publishing
+      under the calling repository's owner. Separate from gitops_token because
+      pushing a package and writing to a delivery repository are different
+      permissions that are not always held by the same credential.
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: pass or fail
+    value: ${{ steps.bench.outputs.result }}
+  run_id:
+    description: The Test Bench run id, for locating the evidence
+    value: ${{ steps.bench.outputs.run_id }}
+  passed:
+    description: Commands that passed
+    value: ${{ steps.bench.outputs.passed }}
+  failed:
+    description: Commands that failed
+    value: ${{ steps.bench.outputs.failed }}
+  cli_version:
+    description: Version of the CLI that was tested
+    value: ${{ steps.bench.outputs.cli_version }}
+  image:
+    description: Image reference built for the tested commit, when one was built
+    value: ${{ steps.image.outputs.reference }}
+  pull_request_url:
+    description: The pull request, when one was opened
+    value: ${{ steps.gitops.outputs.pull_request_url }}
+  update_branch:
+    description: The branch pushed, when one was pushed
+    value: ${{ steps.gitops.outputs.update_branch }}
+  # Exposed so a caller can branch on the promotion without grepping the log.
+  # blocked and failed are deliberately different values: blocked means the run
+  # was not good enough to promote, failed means the promotion machinery broke,
+  # and a caller that retries should only retry the second.
+  gitops_status:
+    description: >-
+      passed, preview, blocked, failed, not_configured or
+      pull_request_created
+    value: ${{ steps.gitops.outputs.gitops_status }}
+  gitops_eligible:
+    description: Whether the run cleared the promotion gate
+    value: ${{ steps.gitops.outputs.gitops_eligible }}
+  gitops_evidence:
+    description: Evidence document published with the update, when one was written
+    value: ${{ steps.gitops.outputs.gitops_evidence }}
+
+  # The call itself, for whoever is counting how much this integration is used.
+  invocation_sequence:
+    description: Which call this was, across every repository in the ledger
+    value: ${{ steps.trace.outputs.invocation_sequence }}
+  invocation_total:
+    description: Total recorded calls to the Test Bench
+    value: ${{ steps.trace.outputs.invocation_total }}
+  invocation_from_repo:
+    description: Recorded calls from the repository that triggered this one
+    value: ${{ steps.trace.outputs.invocation_from_repo }}
+  invocation_repository:
+    description: The repository whose workflow called the Test Bench
+    value: ${{ steps.trace.outputs.invocation_repository }}
+  invocation_commit:
+    description: The commit that triggered this call
+    value: ${{ steps.trace.outputs.invocation_commit }}
+
+runs:
+  using: composite
+  steps:
+    # The bench itself — copied from the action's own directory, not cloned.
+    #
+    # GitHub has already put this repository on the runner: that is what
+    # github.action_path is. Cloning it a second time was wrong in three ways,
+    # and the third one is what actually broke:
+    #
+    #   * it needs a credential the caller does not have. github.token is scoped
+    #     to the CALLER's repository, so checking out a private bench fails —
+    #     while the action itself still loads, because GitHub fetches that
+    #     through its own mechanism. The steps run and the tree is empty, which
+    #     is why this surfaced as "go.mod does not exist" two steps later
+    #     rather than as a checkout error.
+    #   * it cloned @main regardless of what the caller pinned, so
+    #     `uses: …@v1.2` would quietly test a different version of the bench
+    #     than the one it asked for.
+    #   * it cost a network round trip for files already on disk.
+    #
+    # Copied into the workspace rather than used in place, because the bench
+    # writes artifacts/ beside its own root and both upload-artifact and
+    # actions/cache need those paths inside the workspace.
+    - name: Stage the Test Bench
+      shell: bash
+      run: |
+        set -euo pipefail
+        destination="${{ github.workspace }}/.opencenter-test-bench"
+        mkdir -p "${destination}"
+        cp -a "${{ github.action_path }}/." "${destination}/"
+
+        # Fail here, naming the cause, rather than three steps later on a
+        # missing go.mod.
+        if [[ ! -f "${destination}/go.mod" ]]; then
+          echo "::error::The Test Bench was not staged: no go.mod under ${destination}."
+          echo "action_path was ${{ github.action_path }}"
+          ls -la "${{ github.action_path }}" || true
+          exit 1
+        fi
+        echo "staged $(find "${destination}" -type f | wc -l) file(s) from the action"
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: .opencenter-test-bench/go.mod
+        cache: true
+        cache-dependency-path: .opencenter-test-bench/go.sum
+
+    - name: Build the Test Bench
+      shell: bash
+      working-directory: .opencenter-test-bench
+      run: |
+        set -euo pipefail
+        mkdir -p bin
+        go build -o bin/testlab ./cmd/testlab
+        if [[ -d cmd/bench ]]; then go build -o bin/bench ./cmd/bench; fi
+        # The lifecycle binary, built alongside rather than in a mode branch:
+        # it costs a second and it means `mode` chooses which to run, not which
+        # to have.
+        if [[ -d cmd/opencenter-e2e ]]; then
+          go build -o bin/opencenter-e2e ./cmd/opencenter-e2e
+        fi
+
+    # actions/checkout takes owner/name and nothing else — an https:// URL or an
+    # ssh remote fails there with "repository not found", which reads like a typo
+    # rather than a format problem and costs an afternoon. Both are perfectly
+    # reasonable things to paste (they are what `git clone` accepts, and what the
+    # gitops_repository input accepts), so they are normalised here instead of
+    # refused.
+    #
+    # The same three spellings internal/gitopsupdate.Slug() accepts, on purpose:
+    # one rule for repository names across the whole action.
+    - name: Resolve the CLI repository
+      id: cli
+      shell: bash
+      env:
+        RAW: ${{ inputs.opencenter_cli_repository }}
+        # Blank means "whoever called me". That is the zero-configuration case
+        # and the one that makes this action usable from any repository: drop it
+        # in, set nothing, and it tests the repository it is sitting in.
+        CALLER: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        value="${RAW:-$CALLER}"
+        value="${value%/}"
+        value="${value%.git}"
+
+        case "$value" in
+          git@*:*)  value="${value#*:}" ;;          # git@github.com:owner/name
+          *://*)    value="${value#*://}"           # https://host/owner/name
+                    value="${value#*/}" ;;          # drop the host
+        esac
+
+        # The last two segments, so a GitHub Enterprise path with a longer prefix
+        # still resolves to owner/name.
+        #
+        # Only when there is a separator left. Without this guard a bare word
+        # takes the ##/%% expansions on a string containing no slash, both return
+        # it whole, and "testDzoan" becomes "testDzoan/testDzoan" — which then
+        # satisfies the regex below and fails much later as a missing repository.
+        slug="$value"
+        case "$value" in
+          */*)
+            name="${value##*/}"
+            rest="${value%/*}"
+            owner="${rest##*/}"
+            slug="${owner}/${name}"
+            ;;
+        esac
+
+        if [[ ! "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+          echo "::error::opencenter_cli_repository='${RAW}' is not owner/name, an https:// URL or an ssh remote."
+          exit 2
+        fi
+        echo "slug=${slug}" >> "$GITHUB_OUTPUT"
+        if [[ -z "${RAW:-}" ]]; then
+          echo "testing ${slug} (this repository — no input set)"
+        else
+          echo "testing ${slug} (from opencenter_cli_repository)"
+        fi
+
+    # The ledger has to outlive the runner or the count restarts at 1 every job.
+    # A cache rather than an artifact: artifacts cannot be read back by a later
+    # run without an API call and a token, and this needs no permission at all.
+    #
+    # restore-keys makes it cumulative — each run saves under a key containing
+    # its own run id, and the next run restores the newest matching prefix. A
+    # single fixed key would be written once and never updated.
+    #
+    # The profile is in the key because a matrix runs four jobs at once and a
+    # cache key can only be reserved by one of them. Without it every run logged
+    #
+    #   Failed to save: Unable to reserve cache with key
+    #   opencli-bench-invocations-<repo>-<run id>, another job may be
+    #   creating this cache.
+    #
+    # on three of the four, so three quarters of the invocations were dropped and
+    # the ledger — whose entire job is to count how often this action is called —
+    # undercounted by a factor of four. It was reported as a warning and it was
+    # not one: the number it produces was wrong.
+    - name: Restore the invocation ledger
+      uses: actions/cache/restore@v6
+      with:
+        path: .opencenter-test-bench/artifacts/invocations.jsonl
+        key: opencli-bench-invocations-${{ github.repository }}-${{ inputs.profile }}-${{ github.run_id }}
+        restore-keys: |
+          opencli-bench-invocations-${{ github.repository }}-${{ inputs.profile }}-
+          opencli-bench-invocations-${{ github.repository }}-
+          opencli-bench-invocations-
+
+    # Recorded before anything is tested, so a call whose run then fails is still
+    # counted. The question this answers — how often, and by whom — is about the
+    # integration, not about whether any one run passed.
+    - name: Record this invocation
+      id: trace
+      shell: bash
+      working-directory: .opencenter-test-bench
+      run: |
+        set -o pipefail
+        if [[ -x bin/bench ]]; then
+          bin/bench trace record
+        else
+          echo "::warning::bin/bench is not built, so this call was not recorded."
+        fi
+
+    - name: Checkout the openCenter CLI
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ steps.cli.outputs.slug }}
+        ref: ${{ inputs.opencenter_cli_ref }}
+        token: ${{ inputs.opencenter_cli_token || github.token }}
+        path: .opencenter-cli
+
+    # A second toolchain, from the CLI's own go.mod rather than the bench's.
+    #
+    # The two are not the same version and there is no reason they should be:
+    # the bench declares go 1.24, the CLI under test declares 1.26.4, and a CLI
+    # is entitled to require a newer Go than the harness testing it. Building it
+    # with the bench's toolchain fails at "go.mod requires go >= 1.26.4", which
+    # names the CLI's file and so reads as a problem with the CLI rather than
+    # with the harness that chose the compiler.
+    #
+    # Ordered after the bench is already built, so switching the toolchain
+    # underneath costs nothing — everything later runs the compiled binary.
+    # cache: false, because the step above already owns the module cache.
+    #
+    # Both setup-go steps write the same GOMODCACHE — /home/runner/go/pkg/mod is
+    # a property of the runner, not of a checkout — so the second one restores an
+    # archive on top of files the first one has already unpacked. tar will not
+    # overwrite, and the job collected ten of these before giving up:
+    #
+    #   /usr/bin/tar: ../../../go/pkg/mod/gopkg.in/yaml.v3@v3.0.1/parserc.go:
+    #   Cannot open: File exists
+    #   Failed to restore: "/usr/bin/tar" failed with exit code 2
+    #
+    # Non-fatal, and it was still forty annotations across a matrix of four on a
+    # run reported as green. Two steps cannot both own one directory; the first
+    # one keeps it, and its post-job save writes the whole cache — the CLI's
+    # modules included, since by then they are in the same place.
+    - name: Set up Go for the CLI
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: .opencenter-cli/go.mod
+        cache: false
+
+    - name: Build the openCenter CLI
+      shell: bash
+      working-directory: .opencenter-cli
+      run: |
+        set -euo pipefail
+        mkdir -p bin
+        # The entry point has moved between layouts. Try each rather than
+        # assuming one and failing on a repository that is fine.
+        if [[ -d cmd/opencenter ]]; then
+          go build -o bin/opencenter ./cmd/opencenter
+        elif [[ -d cmd/openCenter ]]; then
+          go build -o bin/opencenter ./cmd/openCenter
+        else
+          go build -o bin/opencenter .
+        fi
+        test -x bin/opencenter
+        ./bin/opencenter version || true
+
+    # The cluster lifecycle, when that is what was asked for.
+    #
+    # Everything above is shared with the command bench — the same staged bench,
+    # the same resolved CLI, built with its own toolchain. Only the invocation
+    # differs, which is the whole reason this is one action rather than two.
+    #
+    # --cli-repo points at the checkout above, so the commit that triggered the
+    # run is the commit under test. That is the entire point: naming a fixed
+    # repository here would pin CI to some other commit and report green on it.
+    # mise, because the lifecycle's build phase builds the CLI the way the CLI's
+    # own repository says to, and that is one of the things under test.
+    #
+    # Without it the run got as far as phase 1 and stopped:
+    #
+    #   prerequisites  BLOCKED  missing required tool(s): mise
+    #   build          BLOCKED  needs prerequisites
+    #   … eight more BLOCKED …
+    #   report         INCONCLUSIVE — blocked by Missing prerequisite
+    #
+    # which is the honest verdict and exit 3, not a pass — but it means all four
+    # profiles measured nothing. The old hand-written workflow installed mise and
+    # the composite action that replaced it did not.
+    - name: Set up mise
+      if: inputs.mode == 'lifecycle'
+      uses: jdx/mise-action@v4
+      with:
+        install: true
+        cache: true
+
+    # OpenTofu, because `cluster destroy` runs it for openstack and vmware.
+    #
+    # Without it those two profiles ran every phase, then:
+    #
+    #   destroy         BLOCKED  cluster destroy failed
+    #   verify-cleanup  FAILED   3 resource(s) survived cleanup
+    #   report          INCONCLUSIVE — 2 resource(s) remain because destroy
+    #                   could not run
+    #
+    # which is the correct verdict — nothing was leaked by the product, the tool
+    # that removes it was absent — but a lifecycle that cannot reach its own
+    # teardown has not tested teardown. The CLI's .mise.toml pins go, kubectl,
+    # kind and helm and does not mention tofu, so mise-action does not bring it.
+    #
+    # Through mise rather than a separate setup action: mise is already here, and
+    # one tool manager is easier to reason about than two.
+    - name: Install OpenTofu for destroy
+      if: inputs.mode == 'lifecycle'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mise use -g opentofu@latest
+        tofu version
+
+        # flux, for the Kind flow's fourth deploy step.
+        #
+        #   [4/8] ✗ Bootstrap FluxCD from local Gitea failed:
+        #         exec: "flux": executable file not found in $PATH
+        #
+        # The CLI's .mise.toml pins go, kubectl, kind and helm and never
+        # mentions flux, so mise-action does not bring it — and the machines
+        # this passes on have it installed for other reasons. Same shape as
+        # OpenTofu two lines up: a tool the lifecycle needs that nothing
+        # declares.
+        mise use -g flux2@latest
+        flux --version
+
+        # The CLI on PATH, by name.
+        #
+        # openCenter installs a git pre-commit hook into the GitOps repository
+        # it creates, and that hook runs `opencenter` — by name, not by path.
+        # Step 6 of 8 makes a commit, the hook runs, and:
+        #
+        #   .opencenter/hooks/pre-commit: 10: opencenter: not found
+        #   git commit: exit status 1
+        #
+        # The bench builds the CLI at .opencenter-cli/bin/opencenter and calls
+        # it by full path, which is right for the bench and invisible to a hook
+        # the CLI wrote for itself. On a developer's machine the binary is
+        # already on PATH, so this has never shown up anywhere but a clean
+        # runner.
+        echo "${GITHUB_WORKSPACE}/.opencenter-cli/bin" >> "$GITHUB_PATH"
+
+        # The container runtime, from what is installed rather than from what a
+        # config file wishes for.
+        #
+        # The CLI repository's .mise.toml sets CONTAINER_RUNTIME=podman and
+        # KIND_EXPERIMENTAL_PROVIDER=podman in its [env] block, and mise exports
+        # both into this job. GitHub's runners have Docker and no podman, so the
+        # first Kind run on CI was told to build a cluster with a runtime that is
+        # not on the machine, and deploy failed.
+        #
+        # The same mistake was fixed inside the bench months ago for local runs,
+        # for the same reason and with the same sentence in the comment. It came
+        # back here because mise reads the CLI's file, and the CLI is entitled to
+        # pin podman for the people who use podman.
+        for runtime in docker podman; do
+          if command -v "$runtime" >/dev/null 2>&1 && "$runtime" info >/dev/null 2>&1; then
+            echo "CONTAINER_RUNTIME=${runtime}"        >> "$GITHUB_ENV"
+            echo "KIND_EXPERIMENTAL_PROVIDER=${runtime}" >> "$GITHUB_ENV"
+            echo "container runtime: ${runtime}"
+            break
+          fi
+        done
+
+    - name: Run the cluster lifecycle
+      id: lifecycle
+      if: inputs.mode == 'lifecycle'
+      shell: bash
+      working-directory: .opencenter-test-bench
+      env:
+        OPENCENTER_CLI: ${{ github.workspace }}/.opencenter-cli
+      run: |
+        set -o pipefail
+        approve=""
+        if [[ "${{ inputs.approve_live }}" == "true" ]]; then
+          approve="--approve-live"
+        fi
+
+        # Stages left out in the console, one --skip-phase each.
+        #
+        # Announced rather than applied quietly: a run that covers fifteen
+        # phases of twenty-one and reports itself as a lifecycle run is the kind
+        # of thing somebody finds a month later while asking why CI missed
+        # something. The required phases refuse to be skipped whatever arrives
+        # here — the engine decides that, not this list.
+        skips=()
+        if [[ -n "${{ inputs.skip_phases }}" ]]; then
+          IFS=',' read -ra wanted <<< "${{ inputs.skip_phases }}"
+          for phase in "${wanted[@]}"; do
+            phase="$(echo "${phase}" | tr -d '[:space:]')"
+            [[ -n "${phase}" ]] && skips+=(--skip-phase "${phase}")
+          done
+          echo "::notice::This lifecycle run skips: ${{ inputs.skip_phases }}. It proves less than a full run."
+        fi
+
+        # set +e around the run, because GitHub runs this with `bash -eo
+        # pipefail`: a FAIL verdict exits 2 and the step aborted there, taking
+        # the annotations with it. Every finding was written to the report and
+        # none was ever announced — on precisely the runs that had findings.
+        set +e
+        ./bin/opencenter-e2e e2e run \
+          --profile "${{ inputs.profile }}" \
+          --execution-channel github-actions \
+          --cli-repo "${OPENCENTER_CLI}" \
+          --destroy-after-test="${{ inputs.destroy_after_test }}" \
+          --timeout "${{ inputs.timeout }}" \
+          --report-dir artifacts ${approve} "${skips[@]}"
+        code=$?
+        set -e
+        echo "exit=${code}" >> "$GITHUB_OUTPUT"
+
+        # Every lifecycle finding as an annotation.
+        #
+        # The command bench had this and the lifecycle did not, so a CI
+        # lifecycle run reported nothing whatever it found — and because a
+        # WARNING run exits 0, GitHub called it success and there was not even a
+        # red mark to go looking behind. The console reads annotations back
+        # through the checks API, so without these its GitHub column was empty
+        # for the half of the bench that produces most of the findings.
+        #
+        # ::warning:: for the categories that are not openCenter's fault, so a
+        # port clash on a runner does not read as a product defect.
+        for report in artifacts/*/reports/report.json artifacts/reports/report.json; do
+          [[ -f "${report}" ]] || continue
+          python3 - "${report}" <<'PY'
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        one = lambda v: str(v or "").replace("\n", " ").replace("::", ":")[:220]
+        soft = {"Environment issue", "Provider issue", "Missing prerequisite",
+                "Expected injected failure"}
+        for f in d.get("findings") or []:
+            level = "warning" if f.get("category") in soft else "error"
+            print("::%s title=%s::%s — wanted: %s — got: %s%s" % (
+                level,
+                one(f.get("category") or "openCenter lifecycle"),
+                one(f.get("command") or f.get("phase")),
+                one(f.get("expected")),
+                one(f.get("actual")),
+                " — reproduce: " + one(f.get("reproduce")) if f.get("reproduce") else ""))
+        PY
+        done
+
+    # Runs after a lifecycle however it ended, and especially when it failed: a
+    # run that died mid-deploy is the one that left a cluster behind.
+    - name: Clean up whatever the lifecycle left
+      if: always() && inputs.mode == 'lifecycle'
+      shell: bash
+      working-directory: .opencenter-test-bench
+      run: |
+        # Directories only, and only ones shaped like a run id.
+        #
+        # `ls artifacts | tail -1` picked invocations.jsonl, because the ledger
+        # sorts after e2e-20260808-020201 and is a file. Cleanup then reported
+        #
+        #   no run state at …/artifacts/invocations.jsonl/state/run.json:
+        #   not a directory
+        #
+        # on every job — so nothing was ever cleaned up, and the message blamed
+        # a missing state file rather than the glob that chose the wrong thing.
+        latest="$(ls -1d artifacts/e2e-*/ 2>/dev/null | tail -1)"
+        if [[ -n "${latest}" ]]; then
+          latest="$(basename "${latest}")"
+          ./bin/opencenter-e2e e2e cleanup \
+            --run-id "${latest}" --report-dir artifacts || true
+        fi
+
+    - name: Run the Test Bench
+      id: bench
+      if: inputs.mode != 'lifecycle'
+      shell: bash
+      working-directory: .opencenter-test-bench
+      env:
+        OPENCLI_BIN: ${{ github.workspace }}/.opencenter-cli/bin/opencenter
+        OPENCLI_ENV_MODE: ${{ inputs.environment_mode }}
+        OPENCLI_EMULATED_PROVIDER: ${{ inputs.provider }}
+        OPENCLI_GITOPS_ALLOW_WARNINGS: ${{ inputs.allow_warnings }}
+      run: |
+        set -o pipefail
+
+        # Regenerate the catalogue from the binary just built, rather than
+        # trusting one committed earlier against a different build.
+        if [[ -f scripts/generate-commands-json.py ]]; then
+          python3 scripts/generate-commands-json.py > config/commands.json
+        fi
+
+        version="$("${OPENCLI_BIN}" version 2>/dev/null | head -1 || echo unknown)"
+        echo "cli_version=${version}" >> "$GITHUB_OUTPUT"
+
+        # A hard failure, not a skip. bin/bench is built two steps above, so its
+        # absence means that build failed — and a green run that tested nothing
+        # is the one outcome this action must never produce.
+        if [[ ! -x bin/bench ]]; then
+          echo "::error::bin/bench was not built, so no stage ran."
+          echo "result=error" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        # The environment mode travels in OPENCLI_ENV_MODE, above, rather than on
+        # the command line: `run full` has no --environment flag and passing one
+        # aborts at flag parsing before a single stage runs.
+        # --continue-on-blocking-failure, in CI only.
+        #
+        # Commands is a blocking module, so two defects in `cluster backup` were
+        # stopping the other twenty-eight modules from running at all: every CI
+        # run reported 1 passed, 1 failed, 28 skipped. That is the correct thing
+        # to do at a desk — do not spend twenty minutes on a CLI whose basics are
+        # broken — and the wrong thing for a build report, where the cost of two
+        # known defects was all coverage of every other subsystem.
+        #
+        # The failures are not softened. A blocking module that fails still
+        # fails, still sets the exit code, and still appears in the results with
+        # its cause; the run simply carries on and finds out what else is wrong.
+        # Nothing is reported as passing that did not run.
+        set +e
+        bin/bench run full --source "${{ github.workspace }}/.opencenter-cli" \
+          --provider "${{ inputs.provider }}" \
+          --continue-on-blocking-failure 2>&1 | tee bench-output.log
+        code=${PIPESTATUS[0]}
+        set -e
+
+        run_dir="$(find artifacts/runs -mindepth 1 -maxdepth 1 -type d \
+          -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+        {
+          echo "result=$([[ ${code} -eq 0 ]] && echo pass || echo fail)"
+          echo "run_id=$(basename "${run_dir:-}")"
+        } >> "$GITHUB_OUTPUT"
+
+        if [[ -f "${run_dir}/reports/report.json" ]]; then
+          python3 - "$run_dir/reports/report.json" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        s = d.get("summary", d)
+        print("passed=%s" % s.get("passed", 0))
+        print("failed=%s" % s.get("failed", 0))
+        PY
+
+          # Every failing command, by name, on the run's own summary page.
+          #
+          # The counts said "1 failed" and a reader had to download an artifact
+          # and open a JSON file to find out which command and why. A defect
+          # nobody can see is a defect nobody fixes — and these are findings
+          # about the CLI, which is the whole output of this bench.
+          python3 - "$run_dir/reports/report.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        rows = d.get("failures") or []
+        if rows:
+            print("### Failing commands\n")
+            print("| Command | Environment | Cause | Category |")
+            print("|---|---|---|---|")
+            for f in rows:
+                cell = lambda v: str(v or "").replace("|", "\\|").replace("\n", " ")[:180]
+                print("| `%s` | %s | %s | %s |" % (
+                    cell(f.get("command")), cell(f.get("environment")),
+                    cell(f.get("cause")), cell(f.get("category"))))
+            print("\nThese are findings about the openCenter CLI, not about the bench.")
+        PY
+
+          # The same failures as annotations, one per failing command.
+          #
+          # A summary table is only visible to somebody who opens the run. An
+          # annotation appears on the run's front page, on the commit, on any
+          # pull request that carries it, and — the reason this exists — through
+          # the checks API, which is how the console lists them without
+          # downloading an artifact and parsing it.
+          #
+          # ::error:: rather than ::warning::. These are commands that did not
+          # do what they say they do, and a warning is the wrong word for
+          # "answering no to a destroy prompt destroys the cluster".
+          python3 - "$run_dir/reports/report.json" <<'PY'
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        one = lambda v: str(v or "").replace("\n", " ").replace("::", ":")[:220]
+        # report.json carries modules, not a flat failures list. Reading a key
+        # that is not there emitted nothing at all, so the only failure GitHub
+        # recorded was its own "Process completed with exit code 1" — which
+        # names no command. Each failing assertion is named with the command
+        # syntax it ran, which is exactly what the annotation should say.
+        for m in d.get("modules") or []:
+            for r in m.get("results") or []:
+                if str(r.get("status", "")).lower() != "fail":
+                    continue
+                for a in r.get("assertions") or []:
+                    if str(a.get("status", "")).lower() != "fail":
+                        continue
+                    print("::error title=%s::%s — %s" % (
+                        one(m.get("name") or r.get("category") or "openCenter CLI"),
+                        one(a.get("name")),
+                        one(a.get("detail"))))
+        PY
+        fi
+        exit "${code}"
+
+    # Built after the tests pass and before any pull request, because a
+    # request that sets a tag for an image nobody pushed is worse than no
+    # request: the evidence says it passed and the cluster cannot pull it.
+    - name: Build and push the image
+      id: image
+      if: steps.bench.outputs.result == 'pass'
+      shell: bash
+      working-directory: .opencenter-test-bench
+      env:
+        # Through the environment, never inline: a secret interpolated into a
+        # command line lands in the process list and in any trace of the shell.
+        REGISTRY_TOKEN: ${{ inputs.registry_token || inputs.gitops_token || github.token }}
+      run: |
+        set -euo pipefail
+        tag="${{ inputs.gitops_image_tag }}"
+        [[ -n "${tag}" ]] || tag="sha-${GITHUB_SHA::12}"
+        if [[ "${tag}" == "latest" ]]; then
+          echo "latest is not an acceptable tag for a promotion" >&2
+          exit 2
+        fi
+        reference="${{ inputs.gitops_image_repository }}:${tag}"
+        echo "reference=${reference}" >> "$GITHUB_OUTPUT"
+        echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+        if [[ ! -f Dockerfile ]]; then
+          echo "::warning::No Dockerfile, so no image was built. Preview only."
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        docker build -t "${reference}" .
+
+        # Its own credential, falling back so the common case needs no input at
+        # all: ghcr.io accepts the job's github.token for packages under the
+        # calling repository's owner.
+        registry_token="${REGISTRY_TOKEN:-}"
+        if [[ "${{ inputs.publish }}" != "true" || -z "${registry_token}" ]]; then
+          echo "::notice::Image built, not pushed."
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "${registry_token}" | docker login ghcr.io \
+          -u "${GITHUB_ACTOR}" --password-stdin
+        docker push "${reference}"
+        echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+    - name: Propose the GitOps update
+      id: gitops
+      if: steps.bench.outputs.result == 'pass'
+      shell: bash
+      working-directory: .opencenter-test-bench
+      # These are the names internal/gitopsupdate actually reads — see the Env
+      # block in internal/gitopsupdate/config.go. A near-miss here is silent: the
+      # variable is set, nothing reads it, the stage falls back to its default
+      # repository and the token is simply absent.
+      env:
+        # Defaults to the repository calling this action, which is the common
+        # case when a GitOps repository runs it against itself.
+        OPENCLI_GIT_REPOSITORY: ${{ inputs.gitops_repository || github.repository }}
+        OPENCLI_GIT_BASE_BRANCH: ${{ inputs.gitops_base_branch }}
+        # One path, not two. The updater reads a kustomization.yaml with an
+        # images: block or a Deployment, and works out which from the file it is
+        # given, so the kustomization input wins when both are supplied.
+        OPENCLI_GIT_MANIFEST_PATH: >-
+          ${{ inputs.gitops_kustomization_path || inputs.gitops_manifest_path }}
+        OPENCLI_GIT_CONTAINER_NAME: ${{ inputs.gitops_container_name }}
+        OPENCLI_IMAGE_REPOSITORY: ${{ inputs.gitops_image_repository }}
+        OPENCLI_IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        OPENCLI_GIT_TOKEN: ${{ inputs.gitops_token }}
+        # Read by internal/gitopsupdate/repository.go, which writes it to a file
+        # inside the sandbox and points GIT_SSH_COMMAND at it — the key never
+        # reaches a command line. Required when the repository is an ssh remote,
+        # ignored otherwise.
+        OPENCLI_GIT_SSH_KEY: ${{ inputs.gitops_ssh_key }}
+        OPENCLI_GITOPS_ALLOW_WARNINGS: ${{ inputs.allow_warnings }}
+        OPENCLI_GIT_CREATE_PR: ${{ inputs.publish }}
+        # Both conditions, not either. A credential present by accident must not
+        # be enough, and neither must a flag set by someone who cannot supply
+        # one.
+        #
+        # Either credential opens the gate, because either one can push: a token
+        # over https, a deploy key over ssh. They are not equivalent afterwards —
+        # only the token can open the pull request, and a key-only run stops
+        # after the push and says so rather than failing.
+        OPENCLI_ALLOW_GITOPS_UPDATE: >-
+          ${{ inputs.publish == 'true'
+              && (inputs.gitops_token != '' || inputs.gitops_ssh_key != '')
+              && steps.image.outputs.pushed == 'true'
+              && '1' || '0' }}
+      run: |
+        set -o pipefail
+        if [[ ! -x bin/bench || -z "${{ steps.bench.outputs.run_id }}" ]]; then
+          echo "::warning::Stage 11 needs the headless runner and a completed run."
+          exit 0
+        fi
+
+        # Printed first, so a workflow that ends up proposing nothing shows which
+        # settings reached the runner. No secret is printed; the token appears as
+        # token_present only.
+        bin/bench gitops config || true
+
+        set +e
+        if [[ "${OPENCLI_ALLOW_GITOPS_UPDATE}" == "1" ]]; then
+          bin/bench gitops update "${{ steps.bench.outputs.run_id }}" --approve
+          code=$?
+          mode=update
+        else
+          echo "::notice::Preview only — no branch pushed and no pull request opened."
+          bin/bench gitops preview "${{ steps.bench.outputs.run_id }}"
+          code=$?
+          mode=preview
+        fi
+        set -e
+
+        # 0 ok · 2 configuration · 3 not eligible · 4 approval missing
+        # 5 git failed · 6 pull request failed
+        [[ ${code} -eq 0 ]] && exit 0
+
+        # Whether this fails the job depends on what was asked for, and the split
+        # is the rule stage 11 exists to protect: a functional verdict about the
+        # CLI must not be moved by whether a delivery pull request opened.
+        #
+        # A preview touches no remote and nobody asked it for a deliverable, so
+        # its failure says nothing about the CLI and must not repaint a green run
+        # red. The status is on the step output either way, for a caller that does
+        # want to act on it.
+        #
+        # An approved update is the opposite case. The caller set publish, supplied
+        # a token and asked for a pull request; not getting one is a failure of the
+        # thing they asked for, and swallowing it would leave an image pushed with
+        # nothing proposing it be deployed.
+        if [[ "${mode}" == "preview" ]]; then
+          echo "::warning::The GitOps preview did not complete (exit ${code}). The test result stands."
+          exit 0
+        fi
+        echo "::error::The GitOps update failed (exit ${code}); no pull request was opened."
+        exit "${code}"
+
+    - name: Summarise
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## openCenter CLI Test Bench"
+          echo
+          echo "| Field | Value |"
+          echo "|---|---|"
+          echo "| Called by | \`${{ steps.trace.outputs.invocation_repository || github.repository }}\` |"
+          echo "| Commit | \`${{ steps.trace.outputs.invocation_commit || github.sha }}\` |"
+          echo "| When | \`${{ steps.trace.outputs.invocation_date }} ${{ steps.trace.outputs.invocation_time }}\` |"
+          echo "| Call # | \`${{ steps.trace.outputs.invocation_sequence || '?' }}\` (this repo: \`${{ steps.trace.outputs.invocation_from_repo || '?' }}\`, all: \`${{ steps.trace.outputs.invocation_total || '?' }}\`) |"
+          echo "| Result | \`${{ steps.bench.outputs.result || 'unknown' }}\` |"
+          echo "| CLI | \`${{ inputs.opencenter_cli_repository }}@${{ inputs.opencenter_cli_ref }}\` |"
+          echo "| Version | \`${{ steps.bench.outputs.cli_version || 'unknown' }}\` |"
+          echo "| Passed | \`${{ steps.bench.outputs.passed || 0 }}\` |"
+          echo "| Failed | \`${{ steps.bench.outputs.failed || 0 }}\` |"
+          echo "| Environment | \`${{ inputs.environment_mode }} / ${{ inputs.provider }}\` |"
+          echo "| Image | \`${{ steps.image.outputs.reference || 'not built' }}\` |"
+          echo "| Published | \`${{ steps.image.outputs.pushed || 'false' }}\` |"
+          echo "| GitOps | \`${{ steps.gitops.outputs.gitops_status || 'did not run' }}\` |"
+          echo
+
+          # The pull request is the stage's whole deliverable, so it gets a line
+          # of its own rather than a cell — a URL in a table column is the thing
+          # people copy wrongly.
+          if [[ -n "${{ steps.gitops.outputs.pull_request_url }}" ]]; then
+            echo "**Pull request:** ${{ steps.gitops.outputs.pull_request_url }}"
+          elif [[ -n "${{ steps.gitops.outputs.update_branch }}" ]]; then
+            echo "Branch \`${{ steps.gitops.outputs.update_branch }}\` was pushed; no pull request was opened."
+          else
+            echo "No GitOps change was proposed."
+          fi
+          echo
+          echo "The Test Bench does not deploy. A pull request is the approval;"
+          echo "Flux reconciles only after it is merged."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    # Saved even when the run failed — a failed run is still a call, and the
+    # count would be wrong if only passing ones were kept.
+    - name: Save the invocation ledger
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: .opencenter-test-bench/artifacts/invocations.jsonl
+        key: opencli-bench-invocations-${{ github.repository }}-${{ inputs.profile }}-${{ github.run_id }}
+
+    - name: Upload the evidence
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: opencenter-test-bench-${{ inputs.profile }}-${{ github.run_id }}
+        path: |
+          .opencenter-test-bench/artifacts/runs/
+          .opencenter-test-bench/artifacts/e2e-*/
+          .opencenter-test-bench/artifacts/invocations.jsonl
+          .opencenter-test-bench/bench-output.log
+          !.opencenter-test-bench/artifacts/*/config/clusters/secrets/**
+          !.opencenter-test-bench/artifacts/**/*.key
+          !.opencenter-test-bench/artifacts/**/id_*
+          # The local Gitea's own state, which a container writes as root.
+          #
+          # The upload failed outright on it:
+          #
+          #   EACCES: permission denied, open
+          #   …/config/local/gitea/gitea/certs/key.pem
+          #
+          # One unreadable file and the whole zip is abandoned, so a Kind run
+          # uploaded no evidence at all — including the evidence of why it
+          # failed. These are a throwaway registry's own keys and host keys,
+          # useful to nobody after the job ends, and they are the only files in
+          # the tree the runner cannot read.
+          !.opencenter-test-bench/artifacts/**/config/local/**
+        if-no-files-found: warn
+        retention-days: 30
