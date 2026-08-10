@@ -1,0 +1,475 @@
+# GitHub Actions Integration — stage 10.
+#
+# What this card is for, and what it deliberately is not.
+#
+# It answers one question: "how do I make my repository use this Test Bench?"
+# The answer is a workflow file, so that is what it produces — and, given a
+# repository and a token that may write workflows, installs for you as a pull
+# request. Everything below step 2 is optional.
+#
+# It is NOT a second promotion engine. The eleven GitOps steps — preflight,
+# quality gate, evidence, checkout, branch, manifest, validate, commit, push,
+# pull request, verify — live in internal/gitopsupdate and run inside
+# `bench gitops`, which is the same code path GitHub Actions uses. This card
+# calls that binary; it does not reimplement it.
+#
+# The previous version of this file was 746 lines of shell that duplicated all
+# eleven steps. Two implementations of one promotion gate is one more than is
+# safe, and they had already drifted: the shell read OPENCLI_GITOPS_*, the Go
+# read OPENCLI_GIT_*, so configuring the console left the CI path on its
+# defaults and nobody was told.
+
+stage:
+  id: github-actions-gitops
+  name: GitHub Actions Integration
+  # Rendered as a header panel beside Environment and Credentials, not as a
+  # band in the Test Bench Rail — see renderActionsPanel in cmd/testlab/ui.html.
+  #
+  # It was stage ten of eleven, which said "do this near the end of every run".
+  # That is true of promoting a passing build and false of the rest: connecting
+  # a repository happens once, and reading what CI found happens constantly.
+  # Both were behind ten stages of scrolling.
+  #
+  # before: init keeps it first for anything that still orders stages, so it
+  # never sorts back into the middle of the run.
+  before: init
+  order: 0
+  experimental: true
+  colour: "#1B7CFA"
+  on_colour: "#FFFFFF"
+
+  summary: >-
+    Make any GitHub repository test itself with this bench. Give it a repository
+    and a token and it writes the workflow for you, as a pull request. Every
+    commit then gets a verdict. Promotion to a GitOps repository is optional and
+    off by default — it never merges and never deploys.
+
+  how_it_works: |
+    HOW TO USE THIS — THE SHORT VERSION
+
+        1  Type your repo in "Your GitHub repository"
+             git@github.com:owner/name.git   to use an SSH key
+             owner/name                      to use a token
+
+        2  Paste ONE credential
+             SSH deploy key   easier — no scope to get wrong
+             GitHub token     also opens the pull request for you
+
+        3  Press "Save credentials"   (keeps them on this machine, 0600)
+
+        4  Press a button:
+
+             Generate workflow          prints the file. Sends nothing.
+             Preview against the repo    clones it, shows the exact diff.
+                                         Sends nothing.
+             Install into the repo       pushes a branch, opens a pull
+                                         request. Needs the approval box.
+             Run GitHub Action test      pushes an empty commit so GitHub
+                                         runs the bench. Needs the box too.
+             Show run results            reads back which command failed.
+
+        5  Merge the pull request. Every commit is tested from then on.
+
+        Already wired up? Skip to "Run GitHub Action test" and
+        "Show run results".
+
+    ------------------------------------------------------------------
+
+    HOW TO CONNECT A REPOSITORY TO THIS TEST BENCH
+
+    WHAT YOU GIVE IT
+
+        Repo address    which repo to set up.
+                        git@github.com:owner/name.git   (to use an SSH key)
+                        owner/name                      (to use a token)
+
+        A credential    an SSH deploy key, or a GitHub token.
+                        See "which one" below — the key is usually easier.
+
+    WHAT THE SCRIPT DOES
+
+        1  downloads a temporary copy of your repo
+        2  looks for our file already there
+             same       -> stops, nothing to do
+             different  -> updates it
+             missing    -> adds it
+        3  adds ONE file:  .github/workflows/test-bench.yml
+        4  checks nothing else was touched. If anything else
+           changed, it refuses to continue
+        5  uploads it to your repo as a SUGGESTION — a branch,
+           and a pull request if it can open one
+        6  deletes the temporary copy
+
+    WHAT YOU DO
+
+        Click Merge on the pull request. That is all.
+
+    PROVING IT ACTUALLY RUNS
+
+        "Run GitHub Action test" pushes an EMPTY commit — nothing in the tree
+        changes — to a branch of its own, never to your default branch. The
+        installed workflow has no branch filter, so a branch triggers it
+        exactly as main would, without putting a commit in your history that
+        everybody sees forever.
+
+        Then "Show run results" reads the run back from GitHub and names the
+        command that failed, with the assertion that did not hold.
+
+    WHAT HAPPENS AFTER
+
+        someone pushes a commit   -> your repo runs the bench, reports pass/fail
+        someone opens a PR        -> same, tested before it is merged
+
+    WHY A SUGGESTION AND NOT JUST DOING IT
+
+        Because it is your repo. The script never writes to your main branch.
+        You see a one-file change and approve it. Same reason for step 4.
+
+    WHICH CREDENTIAL — KEY OR TOKEN?
+
+        SSH deploy key      recommended. Add the key to your repo under
+                            Settings -> Deploy keys, with "Allow write access".
+                            Enter the repo as git@github.com:owner/name.git
+
+                            Pushes the file. Cannot open the pull request —
+                            no such thing exists over SSH — so it pushes the
+                            branch and tells you to open one, which is a click.
+
+        GitHub token        also opens the pull request for you.
+                            BUT it must have the workflow permission:
+                              classic token       repo + `workflow` scope
+                              fine-grained        Contents + Workflows: write
+                            A plain contents:write token is REFUSED by GitHub.
+
+        Both                the key pushes, the token opens the request.
+
+        The scope trap only applies to tokens. A deploy key has no scopes, so
+        a key with write access can push a workflow file that a contents:write
+        token cannot. If GitHub has been refusing your token, use a key.
+
+    THE ONE FILE IT ADDS
+
+        .github/workflows/test-bench.yml — about twenty lines, saying one
+        thing: "whenever someone pushes, run the openCenter Test Bench".
+        That single file is the whole connection between your repo and this
+        bench.
+
+    BEFORE ANYTHING IS WRITTEN
+
+        OPENCLI_ALLOW_ACTIONS_SETUP=1   set where the console was started
+        the approval box on step 2      ticked by you
+
+        Neither alone is enough.
+  commands:
+    # ------------------------------------------------------------------ 1 of 4
+    - id: gitops-generate-workflow
+      task: github-actions-gitops
+      short: 1 · Connect my repository
+      shell: true
+      plain: >-
+        Print the workflow file. Leave the repository blank and it tests
+        whichever repository you commit it to. Nothing is written or sent
+        anywhere — this only prints. Step 2 installs it for you.
+      metaphor: Print the work order, ready to hand over.
+      inputs:
+        # One field, and even this one is optional.
+        #
+        # No token here on purpose. Generating a workflow never needs a
+        # credential: the file references ${{ secrets.NAME }} and GitHub
+        # supplies the value at run time. A token box on this step would be a
+        # secret typed into a form that has no use for it. Credentials live on
+        # step 2, which is the step that actually spends one.
+        - env: OPENCLI_ACTIONS_REPOSITORY
+          label: Your GitHub repository
+          placeholder: https://github.com/owner/name
+          help: >-
+            Paste the URL you clone with — https://, git@, or just owner/name.
+            Leave it blank to print a workflow that tests whichever repository
+            you drop it into. Fill it in to have step 2 install it for you.
+        # Set by the console from "What to test", never typed — see the note on
+        # the install step below.
+        - env: OPENCLI_E2E_SKIP_PHASES
+          label: Lifecycle phases to skip
+        - env: OPENCLI_ACTIONS_KIND
+          label: Which workflow
+        - env: OPENCLI_ACTIONS_SSH_KEY
+          label: SSH deploy key (recommended)
+          kind: secret
+          placeholder: ~/.ssh/id_ed25519
+          help: >-
+            LEAVE BLANK to use this machine's own SSH key — the one that already
+            authenticates you to GitHub. That is the usual answer. Otherwise a
+            path such as ~/.ssh/id_ed25519, or a pasted private key; both are
+            accepted. A key is the easier route because it has no scopes, so it
+            can push a workflow file that a contents:write token is refused for.
+            It cannot open the pull request — nothing can, over SSH — so you
+            open that with one click.
+        - env: OPENCLI_ACTIONS_TOKEN
+          label: GitHub token (alternative)
+          kind: secret
+          help: >-
+            Opens the pull request for you as well. Must carry the workflow
+            permission: a classic token needs repo + `workflow`, a fine-grained
+            one needs Contents + Workflows: write. A plain contents:write token
+            is refused by GitHub. Blank still prints the file. Also used by
+            step 6 to read run results, which needs only read access.
+        # Declared so the values typed above reach this command: shell.go's
+        # inputEnv() allows a variable only for the command that declares it,
+        # and drops anything else in silence. The panel renders each field
+        # once, so declaring them here adds no second copy on the page.
+        - env: OPENCLI_GIT_REPOSITORY
+          label: GitOps repository
+        - env: OPENCLI_GIT_MANIFEST_PATH
+          label: File to update
+        # Sent by the panel from the console's own Environment selection, so
+        # the workflow this writes runs what is on screen rather than the
+        # action's defaults. Declared because shell.go's inputEnv() allows a
+        # variable only for the command that declares it.
+        - env: OPENCLI_ACTIONS_ENV_MODE
+          label: Environment mode
+        - env: OPENCLI_ACTIONS_PROVIDER
+          label: Provider
+      ready: |
+        # Rendered by the binary, not here.
+        #
+        # This was sixty lines of shell building the same YAML that
+        # internal/actionsetup.Workflow() builds in Go. Two renderers of one
+        # file is one more than is safe: install would commit one version
+        # while the card printed another, and the drift would be invisible
+        # until somebody compared them by hand.
+        exec "${OPENCLI_BENCH_ROOT}/bin/bench" actions workflow
+
+    # ------------------------------------------------------------------ 2 of 4
+    #
+    # The automation. Everything above only prints; this is the step that
+    # reaches somebody else's repository, so it carries both gates and opens a
+    # pull request rather than pushing to their default branch.
+    - id: actions-install
+      task: github-actions-gitops
+      short: 2 · Install it for me
+      shell: true
+      plain: >-
+        Clone the repository above, add or update .github/workflows/test-bench.yml
+        on a branch, and open a pull request. Only that one path may change. If
+        the file is already identical it stops and says so. Merge the request and
+        every commit is tested. It never merges and never deploys.
+      metaphor: Deliver the work order and ask for a signature.
+      inputs:
+        - env: OPENCLI_ACTIONS_APPROVE
+          label: I approve opening a pull request on that repository
+          kind: select
+          default: "yes"
+          options: ["no", "yes"]
+        - env: OPENCLI_ACTIONS_REPLACE
+          label: Replace an existing workflow, losing its settings
+          kind: select
+          default: "yes"
+          options: ["no", "yes"]
+          help: >-
+            A repository already running this bench usually has a workflow
+            somebody configured — a provider, an environment mode, GitOps
+            settings. Installing writes the standard file and nothing else, so
+            it would delete those. Left at no, an existing workflow stops the
+            install and says how many lines would go.
+        # Declared so the values typed above reach this command: shell.go's
+        # inputEnv() allows a variable only for the command that declares it,
+        # and drops anything else in silence. The panel renders each field
+        # once, so declaring them here adds no second copy on the page.
+        - env: OPENCLI_ACTIONS_REPOSITORY
+          label: Your GitHub repository
+        # Set by the console from "What to test", never typed. Declared so
+        # inputEnv() lets it through; not listed in the panel's field list, so
+        # it renders no box — a comma-separated phase list is not something to
+        # ask somebody to spell.
+        - env: OPENCLI_E2E_SKIP_PHASES
+          label: Lifecycle phases to skip
+        - env: OPENCLI_ACTIONS_KIND
+          label: Which workflow
+        - env: OPENCLI_ACTIONS_SSH_KEY
+          label: SSH deploy key
+          kind: secret
+        - env: OPENCLI_ACTIONS_TOKEN
+          label: GitHub token
+          kind: secret
+        - env: OPENCLI_GIT_REPOSITORY
+          label: GitOps repository
+        - env: OPENCLI_GIT_MANIFEST_PATH
+          label: File to update
+        # Sent by the panel from the console's own Environment selection, so
+        # the workflow this writes runs what is on screen rather than the
+        # action's defaults. Declared because shell.go's inputEnv() allows a
+        # variable only for the command that declares it.
+        - env: OPENCLI_ACTIONS_ENV_MODE
+          label: Environment mode
+        - env: OPENCLI_ACTIONS_PROVIDER
+          label: Provider
+      ready: |
+        set -eu
+        # Preview first, always. The operator sees the exact diff before the
+        # approval is read, so "install" is never the first time they find out
+        # what it would do.
+        if [ "${OPENCLI_ACTIONS_APPROVE:-no}" != yes ]; then
+          echo "Not approved — showing what would change. Nothing is sent."
+          echo
+          exec "${OPENCLI_BENCH_ROOT}/bin/bench" actions preview
+        fi
+        exec "${OPENCLI_BENCH_ROOT}/bin/bench" actions install --approve
+    # Merging without a token.
+    #
+    # A pull request is merged when its commits reach the base branch, however
+    # they get there. Pushing the setup branch onto the default branch does
+    # exactly that over SSH, and GitHub closes the request as merged by itself.
+    # The API route would need Contents: write; the key that pushed the branch
+    # already has everything this needs.
+    - id: actions-merge
+      task: github-actions-gitops
+      short: 2b · Merge the setup pull request
+      shell: true
+      plain: >-
+        Put the workflow on the default branch by pushing the setup branch onto
+        it. GitHub then closes the pull request as merged. Uses the same SSH key
+        that pushed the branch — no token, no workflow scope.
+      metaphor: Sign the work order that was left on the desk.
+      inputs:
+        - env: OPENCLI_ACTIONS_KIND
+          label: Which workflow
+        - env: OPENCLI_ACTIONS_MERGE_APPROVE
+          label: I approve merging it into the default branch
+          kind: select
+          default: "yes"
+          options: ["no", "yes"]
+        - env: OPENCLI_ACTIONS_REPOSITORY
+          label: Your GitHub repository
+      run: |
+        set -eu
+        if [ "${OPENCLI_ACTIONS_MERGE_APPROVE:-no}" != yes ]; then
+          echo "REFUSED — tick \"I approve merging it into the default branch\"."
+          echo
+          echo "This one writes to the branch everybody else works from, which is"
+          echo "why it asks separately from the box that opens the request."
+          exit 4
+        fi
+        repo="${OPENCLI_ACTIONS_REPOSITORY:-}"
+        if [ -z "$repo" ]; then
+          echo "No repository set."; exit 4
+        fi
+        case "${OPENCLI_ACTIONS_KIND:-test-bench}" in
+          opencenter-e2e) branch=automation/opencenter-e2e-setup ;;
+          *)              branch=automation/test-bench-setup ;;
+        esac
+
+        work="$(mktemp -d)"
+        trap 'rm -rf "$work"' EXIT
+        git clone --quiet "$repo" "$work"
+        cd "$work"
+        base="$(git symbolic-ref --short HEAD)"
+
+        if ! git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
+          echo "No ${branch} on the remote — nothing to merge."
+          echo "Either it is already merged, or the install found the workflow"
+          echo "identical and opened no request. Both mean the file is there."
+          exit 0
+        fi
+
+        # Fast-forward only. A merge commit here would mean the branch had
+        # diverged from the base, and quietly resolving that is not this
+        # button's business.
+        echo "merging ${branch} into ${base}"
+        git push origin "origin/${branch}:refs/heads/${base}"
+        echo
+        echo "pushed. GitHub closes the pull request as merged once it sees the"
+        echo "commits on ${base}."
+    - id: actions-trigger
+      task: github-actions-gitops
+      short: 3 · Run a GitHub Actions test
+      shell: true
+      plain: >-
+        Push an empty commit to the repository above so GitHub runs the bench
+        against it. Empty on purpose — nothing in the tree changes; it exists
+        only to start the pipeline. It goes to a branch of its own, never to
+        your default branch. Then press "Show run results".
+      metaphor: Ring the bell and see whether anybody comes.
+      inputs:
+        - env: OPENCLI_ACTIONS_KIND
+          label: Which workflow
+        # Its own approval, not the one install uses.
+        #
+        # They shared OPENCLI_ACTIONS_APPROVE, and the panel draws each field
+        # once — so the box on screen carried install's wording, "I approve
+        # opening a pull request". This button opens no pull request; it pushes
+        # an empty commit. Anybody answering that question honestly left it at
+        # no, and then found this step refused with no idea which box it meant.
+        - env: OPENCLI_ACTIONS_TRIGGER_APPROVE
+          label: I approve pushing an empty commit to that repository
+          kind: select
+          default: "yes"
+          options: ["no", "yes"]
+        - env: OPENCLI_ACTIONS_REPOSITORY
+          label: Your GitHub repository
+        - env: OPENCLI_ACTIONS_SSH_KEY
+          label: SSH deploy key
+          kind: secret
+        - env: OPENCLI_ACTIONS_TOKEN
+          label: GitHub token
+          kind: secret
+      ready: |
+        set -eu
+        # The approval is read here as well as inside the binary, so refusing
+        # costs no clone and the message names what is missing.
+        if [ "${OPENCLI_ACTIONS_TRIGGER_APPROVE:-no}" != yes ]; then
+          echo "REFUSED — tick \"I approve pushing an empty commit\" beside this button."
+          echo
+          echo "That is a different box from the one install uses: this pushes a"
+          echo "commit, it does not open a pull request."
+          echo
+          echo "Nothing was pushed. A commit is a commit even when it is empty:"
+          echo "it lands in somebody's history and starts a job on their runners."
+          exit 4
+        fi
+        exec "${OPENCLI_BENCH_ROOT}/bin/bench" actions trigger --approve
+
+    # ------------------------------------------------------------------ 4 of 4
+    #
+    # The answer to "did it work", read from GitHub rather than from this
+    # machine. Everything else in the console reports a local run; this reports
+    # the run CI did, against the commit that was actually pushed.
+    - id: actions-results
+      task: github-actions-gitops
+      short: 4 · Results — which command failed?
+      shell: true
+      plain: >-
+        List the recent GitHub Actions runs of the bench for the repository
+        above, then open the newest failed one and name the commands that broke,
+        with the assertion that did not hold. Read-only; touches nothing.
+      metaphor: Read the inspection report that came back from site.
+      inputs:
+        - env: OPENCLI_ACTIONS_KIND
+          label: Which workflow
+        # Declared so the values typed above reach this command: shell.go's
+        # inputEnv() allows a variable only for the command that declares it,
+        # and drops anything else in silence. The panel renders each field
+        # once, so declaring them here adds no second copy on the page.
+        - env: OPENCLI_ACTIONS_REPOSITORY
+          label: Your GitHub repository
+        - env: OPENCLI_ACTIONS_TOKEN
+          label: GitHub token
+          kind: secret
+      ready: |
+        exec "${OPENCLI_BENCH_ROOT}/bin/bench" actions runs
+
+# ------------------------------------------------------------------------------
+# Settings with defaults that are right until you have a reason. Set them in the
+# environment; they are off the card because every extra box costs attention on
+# the ones that matter.
+#
+#   OPENCLI_GIT_BASE_BRANCH      main
+#   OPENCLI_GIT_CONTAINER_NAME   test-bench   (Deployments only)
+#   OPENCLI_IMAGE_REPOSITORY     ghcr.io/sherlock2019/opencenter-cli-test-bench
+#   OPENCLI_IMAGE_TAG            blank -> sha-<tested commit>; `latest` refused
+#   OPENCLI_GITOPS_ALLOW_WARNINGS  false
+#   OPENCLI_ACTION_REF           Sherlock2019/opencenterclitest-Simple@main
+#                                — which published action step 1 writes into the
+#                                  workflow. Off the card because the default is
+#                                  right for everyone except whoever republishes
+#                                  the bench, and a box nobody edits still costs
+#                                  attention from everybody.

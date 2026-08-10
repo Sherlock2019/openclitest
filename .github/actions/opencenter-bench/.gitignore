@@ -1,0 +1,21 @@
+# Build output and run artifacts. Nothing here is source.
+/bin/
+/artifacts/
+/.venv/
+
+# Local credentials. The console writes the answers you type here so a rerun
+# does not ask again. It never leaves this machine, and it must never be
+# committed.
+/config/credentials.local.yaml
+*.local.yaml
+*.local.json
+clouds.yaml
+
+# Keys the CLI generates for a test cluster. They live under a run directory,
+# which /artifacts/ already covers — this is here because `cluster init` writes
+# a working SSH private key and an age private key, and one careless
+# --report-dir outside artifacts/ would put them in a commit.
+*.pem
+id_ed25519*
+id_rsa*
+**/secrets/**

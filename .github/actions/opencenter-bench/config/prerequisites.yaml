@@ -1,0 +1,434 @@
+# Everything the bench needs, with a read-only check for each.
+#
+# `check` is run live by the console and by `bench preflight`. Every check is
+# read-only: it asks whether something is present or reachable and changes
+# nothing. `install` is the command that fixes it, and it is runnable too —
+# from the command table's prerequisites stage, in your own HOME rather than
+# in the sandbox. `risk` says what it will touch and is derived from the
+# command text when this file does not say: safe, host, or root.
+#
+# `needed_for` maps an item to the environments in config/environments.yaml.
+# An environment refuses to start when one of its required items is missing,
+# and tells you which one.
+
+# This file has two readers. The preflight panel runs the checks and reports
+# them as cards; the command table renders the same items as stage 0, ahead of
+# init. One list, so adding a tool here makes it appear in both.
+groups:
+  - id: toolchain
+    name: Toolchain
+    order: 1
+    summary: >-
+      Building and running the bench itself. Without these nothing else runs,
+      so start here.
+    items:
+      - id: go
+        name: Go toolchain
+        metaphor: >-
+          The foundry that casts the tools. Nothing else on the site gets made without it.
+        why: The bench, the simulator and the checks are Go programs.
+        needed_for: [local, sim, flex, kind]
+        check: (mise exec -- go version) 2>/dev/null || go version
+        install: |
+          # mise pins the version this repository was developed against
+          curl https://mise.run | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          mise install go
+          # or use any Go 1.24 or newer from your distribution
+
+      - id: git
+        name: git
+        metaphor: >-
+          The city archive. Every change to the plans is recorded and can be traced back to who drew it.
+        why: Cloning repositories and every GitOps operation the CLI performs.
+        needed_for: [local, sim, flex, kind]
+        check: command -v git && git --version
+        install: |
+          # Debian / Ubuntu
+          sudo apt update && sudo apt install -y git
+          # macOS
+          xcode-select --install
+
+      - id: opencenter
+        name: opencenter binary
+        metaphor: >-
+          The general contractor. The one you are actually here to inspect.
+        why: >-
+          The thing being tested. Point the bench at a build with
+          OPENCLI_BIN, or drop one in ./bin/opencenter.
+        needed_for: [local, sim, flex, kind]
+        check: |
+          bin="${OPENCLI_BIN:-}"
+          [ -n "$bin" ] || bin="$(command -v opencenter 2>/dev/null)"
+          [ -n "$bin" ] || bin=./bin/opencenter
+          test -x "$bin" && "$bin" version | head -1
+        install: |
+          # Build it from a checkout of the CLI
+          cd /path/to/openCenter-cli && mise run build
+          # then point the bench at the result
+          export OPENCLI_BIN=/path/to/openCenter-cli/bin/opencenter
+
+      - id: mise
+        name: mise
+        metaphor: >-
+          The tool crib that hands out the right version of each tool, so two crews never build to different standards.
+        why: >-
+          Pins the version of Go, kind, kubectl and helm this repository was
+          developed against, so the bench behaves the same on your machine as
+          it does in CI.
+        needed_for: [local, sim, flex, kind]
+        check: command -v mise && mise --version
+        install: |
+          curl https://mise.run | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          mise install
+
+  - id: local-lab
+    name: Local cluster lab
+    order: 2
+    summary: >-
+      Needed only by the Kind environment. Everything else runs without a
+      container runtime.
+    items:
+      - id: container-runtime
+        name: Docker or Podman
+        metaphor: >-
+          The yard where prefabricated units are assembled before they are craned into place.
+        why: Kind runs Kubernetes nodes as containers.
+        needed_for: [kind]
+        check: docker info >/dev/null 2>&1 && echo "docker running" || (podman info >/dev/null 2>&1 && echo "podman running")
+        install: |
+          # Docker
+          sudo apt install -y docker.io
+          sudo usermod -aG docker "$USER"   # log out and back in
+          # Podman
+          sudo apt install -y podman
+          export KIND_EXPERIMENTAL_PROVIDER=podman
+
+      - id: kind
+        name: kind
+        metaphor: >-
+          A scale model of the whole city on a tabletop, so a mistake costs an afternoon instead of a quarter.
+        why: Creates the ephemeral Kubernetes cluster the lifecycle runs against.
+        needed_for: [kind]
+        # `command -v` alone answered "missing" for a kind that was installed:
+        # mise puts tools under installs/ and only exposes them through shims,
+        # which are not on PATH until a global version is set. Both are checked.
+        check: |
+          command -v kind >/dev/null 2>&1 && kind version && exit 0
+          ls "$HOME/.local/share/mise/installs/kind"/*/kind >/dev/null 2>&1 \
+            && echo "installed under mise, but not on PATH — see the install command" \
+            && exit 1
+          echo "kind is not installed"; exit 1
+        # `mise install kind` needs a .mise.toml that pins it, and leaves the
+        # shim unusable with "No version is set for shim: kind". `use -g` pins a
+        # global version and makes the shim work from any directory.
+        install: |
+          mise use -g kind@latest
+          # If mise's shims are not yet on PATH:
+          echo 'export PATH="$HOME/.local/share/mise/shims:$PATH"' >> ~/.bashrc
+
+      - id: api-port
+        name: Kubernetes API port free
+        metaphor: >-
+          One switchboard, one line. A second city cannot be reached on the number the first already answers.
+        why: >-
+          Kind publishes the API server on 127.0.0.1:6443. A machine that already
+          has a cluster there cannot create another, and the failure arrives deep
+          inside kind as "port is already allocated" after the node image has
+          been pulled and three containers started.
+        needed_for: [kind]
+        check: |
+          holder=$(docker ps --filter publish=6443 \
+            --format '{{.Label "io.x-k8s.kind.cluster"}}' 2>/dev/null | head -1)
+          if [ -n "$holder" ]; then
+            echo "127.0.0.1:6443 is already taken by the kind cluster: $holder"; exit 1
+          fi
+          echo "6443 is free"
+        install: |
+          # Whichever cluster is in the way, if it is disposable:
+          kind get clusters
+          kind delete cluster --name <the-one-you-do-not-need>
+
+      - id: kubectl
+        name: kubectl
+        metaphor: >-
+          The site radio. How you ask the city what it is doing, and tell it to do something else.
+        why: Verifying the deployed cluster answers and its nodes are ready.
+        needed_for: [kind]
+        check: command -v kubectl && kubectl version --client -o yaml | head -3
+        install: mise use -g kubectl@latest
+
+      - id: helm
+        name: helm
+        metaphor: >-
+          Standard building plans. A whole block raised from one drawing instead of brick by brick.
+        why: Installing platform services into a deployed cluster.
+        needed_for: []
+        check: command -v helm && helm version --short
+        install: mise use -g helm@latest
+
+  - id: flex
+    name: FLEX / OpenStack access
+    order: 3
+    summary: >-
+      Needed for the real OpenStack environment. Use a dedicated project with
+      strict quotas — never a production one. Credentials are entered in the
+      console, or read from your existing clouds.yaml.
+    items:
+      - id: openstack-cli
+        name: openstack client
+        metaphor: >-
+          The land registry office for the region you are building in.
+        why: >-
+          The bench authenticates with it before spending time on a run, and
+          uses it afterwards to prove a destroy left nothing behind.
+        needed_for: [flex]
+        check: command -v openstack && openstack --version
+        install: |
+          python3 -m venv ~/.venvs/openstack
+          ~/.venvs/openstack/bin/pip install python-openstackclient
+          export PATH="$HOME/.venvs/openstack/bin:$PATH"
+
+      - id: clouds-yaml
+        name: clouds.yaml
+        metaphor: >-
+          Your papers at the registry desk: which office, which account, which project.
+        why: >-
+          Holds the connection profile. Application credentials are preferred
+          over a username and password: they are scoped to one project and can
+          be revoked without changing anyone's password.
+        needed_for: [flex]
+        check: |
+          f="${OS_CLIENT_CONFIG_FILE:-$HOME/.config/openstack/clouds.yaml}"
+          test -f "$f" && echo "found $f"
+        install: |
+          # The console writes this for you from the credentials panel, or:
+          mkdir -p ~/.config/openstack
+          cat > ~/.config/openstack/clouds.yaml <<'YAML'
+          clouds:
+            opencenter-lab:
+              auth_type: v3applicationcredential
+              auth:
+                auth_url: https://keystone.<region>.api.rackspacecloud.com/v3
+                application_credential_id: <id>
+                application_credential_secret: <secret>
+              region_name: <region>
+              interface: public
+              identity_api_version: 3
+          YAML
+          chmod 600 ~/.config/openstack/clouds.yaml
+
+      - id: os-cloud
+        name: OS_CLOUD is set
+        metaphor: >-
+          Which of your registry accounts today's work is booked against.
+        why: Selects which profile in clouds.yaml the bench uses.
+        needed_for: [flex]
+        check: test -n "$OS_CLOUD" && echo "OS_CLOUD=$OS_CLOUD"
+        install: |
+          export OS_CLOUD=opencenter-lab
+          echo 'export OS_CLOUD=opencenter-lab' >> ~/.bashrc
+
+      - id: os-auth
+        name: Authentication works
+        metaphor: >-
+          Proving at the desk that the papers are real, before any trucks are ordered.
+        why: >-
+          Proves the credentials are valid and scoped before a run spends time
+          or money on them.
+        needed_for: [flex]
+        check: openstack token issue -f value -c project_id
+        install: |
+          # Create a project-scoped application credential
+          openstack application credential create opencenter-lab \
+            --description "openCenter CLI bench" \
+            --expiration "$(date -u -d '+90 days' '+%Y-%m-%dT%H:%M:%S')"
+          # The secret is shown once. Put it in clouds.yaml.
+
+      - id: os-quota
+        name: Project quota headroom
+        metaphor: >-
+          How much land and concrete the account is actually allowed. Running out mid-pour is the expensive way to find out.
+        why: >-
+          A deployment that runs out of quota half way through leaves orphaned
+          resources you then have to find by hand.
+        needed_for: []
+        check: openstack quota show -f value -c instances -c cores -c ram 2>/dev/null | head -3
+        install: |
+          openstack quota show
+          # Ask your cloud administrator to raise the limits, or reduce the
+          # node count in the cluster configuration.
+
+  - id: gitops
+    name: GitOps and secrets
+    order: 4
+    summary: >-
+      Needed for a real deployment. The bench generates its own throwaway keys
+      for every other environment, so these stay unset until you deploy.
+    items:
+      - id: age-key
+        name: Age encryption key
+        metaphor: >-
+          The safe that sealed envelopes are locked in before they go anywhere near the archive.
+        why: >-
+          SOPS encrypts cluster secrets to this key before they are committed.
+          Without it, secrets cannot be stored in Git safely.
+        needed_for: []
+        check: test -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" && echo found
+        install: |
+          mkdir -p ~/.config/sops/age && age-keygen -o ~/.config/sops/age/keys.txt
+          chmod 600 ~/.config/sops/age/keys.txt
+
+      - id: git-remote
+        name: GitOps repository reachable
+        metaphor: >-
+          The off-site archive everyone builds from, so the plans survive losing this machine.
+        why: The generated manifests are pushed here, and Flux reconciles from it.
+        needed_for: []
+        check: test -n "$OPENCLI_GIT_REPOSITORY" && git ls-remote "$OPENCLI_GIT_REPOSITORY" HEAD
+        install: |
+          export OPENCLI_GIT_REPOSITORY=git@github.com:your-org/your-cluster.git
+          git ls-remote "$OPENCLI_GIT_REPOSITORY"
+
+      - id: ssh-key
+        name: SSH key pair
+        metaphor: >-
+          The master key cut for the site gates, so the contractor can get in to do the work.
+        why: >-
+          openCenter injects a public key into the nodes it provisions and uses
+          the private half to reach them.
+        needed_for: []
+        check: ls -1 ~/.ssh/id_ed25519 ~/.ssh/id_rsa 2>/dev/null | head -1
+        install: |
+          ssh-keygen -t ed25519 -C "opencenter-lab" -f ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+  # The values you have to decide, as opposed to the software you have to
+  # install. A machine with every tool present still cannot run stage 1 without
+  # knowing which organisation, which cluster and which git repository — and
+  # those failures arrive later and read worse, because the tool is right there
+  # and the command still does not work.
+  #
+  # The `install` line for each of these is not an installation. It is where
+  # the value is set: the credentials panel above writes most of them into
+  # config/credentials.local.yaml at mode 0600, and the export shown is the
+  # equivalent if you would rather set it in your own shell.
+  - id: inputs
+    name: Inputs you must supply
+    order: 5
+    summary: >-
+      Not software — decisions. The identity of the cluster and where its
+      manifests are kept. Checked here so a missing one is found before a
+      command fails for a reason that looks like something else.
+    items:
+      - id: input-organisation
+        name: Organisation
+        metaphor: >-
+          Whose name goes on the deeds. Every plot in the registry is filed under it.
+        why: >-
+          The first half of every cluster reference the CLI takes:
+          org/cluster. The bench fills it from config/environments.yaml.
+        needed_for: [local, sim, flex, kind]
+        # A block scalar, because the echo contains ": " and a plain YAML
+        # scalar may not — it parses as a nested mapping and takes the whole
+        # file down with it.
+        check: |
+          echo "organisation ${OPENCLI_ORG:-testbench}"
+        install: |
+          # The bench supplies this per environment. To override it:
+          export OPENCLI_ORG=your-org
+
+      - id: input-cluster
+        name: Cluster name
+        metaphor: >-
+          The street address of this particular building. Short, lowercase, and it never changes.
+        why: >-
+          The second half of the reference, and the directory the generated
+          GitOps tree is written under. It must be a DNS label.
+        needed_for: [local, sim, flex, kind]
+        check: |
+          name="${OPENCLI_CLUSTER:-tb-openstack}"
+          printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
+            && echo "cluster: $name" \
+            || { echo "not a DNS label: $name"; exit 1; }
+        install: |
+          # Set per environment by the bench. To override it:
+          export OPENCLI_CLUSTER=your-cluster
+
+      - id: input-git-repository
+        name: GitOps repository
+        metaphor: >-
+          Which archive the finished drawings are filed in. Everyone building
+          reads from it, so it has to exist before anything is drawn.
+        why: >-
+          Where `cluster generate` writes and Flux reconciles from. A local
+          file:// path is fine for a test run and needs no credentials.
+        needed_for: [local, sim, flex, kind]
+        check: |
+          repo="${OPENCLI_GIT_REPOSITORY:-}"
+          test -n "$repo" || { echo "OPENCLI_GIT_REPOSITORY is not set"; exit 1; }
+          echo "repository: $repo"
+        install: |
+          # Entered in the credentials panel above, or:
+          export OPENCLI_GIT_REPOSITORY=file:///tmp/opencli-bench-gitops.git
+          # a real one needs write access:
+          export OPENCLI_GIT_REPOSITORY=git@github.com:your-org/your-cluster.git
+
+      - id: input-git-token
+        name: GitOps write credential
+        metaphor: >-
+          Permission to file in the archive, not merely to read from it.
+        why: >-
+          Needed only when the repository is remote and pushed to over HTTPS.
+          An SSH remote uses the key pair above instead.
+        needed_for: [flex]
+        check: |
+          repo="${OPENCLI_GIT_REPOSITORY:-}"
+          case "$repo" in
+            file://*|"") echo "local repository: no credential needed"; exit 0 ;;
+            git@*|ssh://*) echo "SSH remote: uses the key pair, no token needed"; exit 0 ;;
+          esac
+          test -n "${OPENCLI_GIT_TOKEN:-}" && echo "token is set" || {
+            echo "remote is $repo but OPENCLI_GIT_TOKEN is not set"; exit 1; }
+        install: |
+          # Entered in the credentials panel above. Stored 0600 in
+          # config/credentials.local.yaml, which is gitignored.
+          export OPENCLI_GIT_TOKEN=<a token with write access to that repository>
+
+      - id: input-sops-recipients
+        name: Secret recipients
+        metaphor: >-
+          Who is issued a key to the safe. Seal an envelope to nobody and it
+          can never be opened again — including by you.
+        why: >-
+          The age public keys cluster secrets are encrypted to before they are
+          committed. Without at least one, generation produces secrets nothing
+          in the cluster can decrypt.
+        needed_for: [flex, kind]
+        check: |
+          test -n "${SOPS_AGE_RECIPIENTS:-}" \
+            && echo "recipients: ${SOPS_AGE_RECIPIENTS}" \
+            || { echo "SOPS_AGE_RECIPIENTS is not set"; exit 1; }
+        install: |
+          # The public half of the age key. Safe to share — it only encrypts.
+          export SOPS_AGE_RECIPIENTS=$(age-keygen -y ~/.config/sops/age/keys.txt)
+
+      - id: input-kubeconfig
+        name: KUBECONFIG
+        metaphor: >-
+          The keys and address of the building you are inspecting. Point them
+          at the wrong building and the inspection still happens.
+        why: >-
+          Which cluster the operate-stage commands talk to. The bench writes
+          its own for the Kind environment and offers only that one — an
+          ambient KUBECONFIG could point anywhere, including production.
+        needed_for: [kind]
+        check: |
+          config="${KUBECONFIG:-}"
+          test -n "$config" || { echo "KUBECONFIG is not set (the bench sets its own for Kind)"; exit 0; }
+          test -f "$config" && echo "kubeconfig: $config" || {
+            echo "KUBECONFIG points at $config, which does not exist"; exit 1; }
+        install: |
+          # The bench writes and uses its own for Kind. To point at another:
+          export KUBECONFIG=$HOME/.kube/config

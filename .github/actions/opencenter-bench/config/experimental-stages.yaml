@@ -1,0 +1,120 @@
+# Stages added to the command table beyond the ones the CLI's own command tree
+# produces.
+#
+# Marked experimental for a reason. The seven lifecycle stages are read out of
+# the binary — every command declares one — so they are a fact. A stage here is
+# this bench's opinion about how a feature should be exercised, and the page
+# says so rather than letting the two look alike.
+#
+# Every invocation below was checked against the binary's own --help on
+# 2026-08-04. Notable corrections to what a reader might assume:
+#
+#   * the service is `kafka-cluster`, not `kafka`
+#   * `cluster generate` has NO --dry-run. It has --render-only
+#   * `cluster validate` has --manifests, which validates the generated
+#     GitOps files — that is the real "did generation produce valid YAML"
+#   * service-kafka-cluster.yaml declares no OLM dependency. It ships the
+#     Strimzi operator itself as a Flux source plus a HelmRelease, so there is
+#     no "enable OLM first" step in the source
+#
+# {{ref}} is replaced with the environment's own org/cluster.
+
+stages:
+  - id: kafka
+    name: Kafka integration
+    experimental: true
+    # Inserted directly after this stage. The seven real ones keep their order.
+    after: operate
+    colour: "#BF5AF2"
+    on_colour: "#2A0838"
+    summary: >-
+      Enable the Kafka service, check the configuration still holds, render the
+      GitOps files and validate them, then turn it off again — leaving the
+      cluster definition as it was found. Configuration and generation only:
+      nothing here starts a broker or needs the mutation gate.
+
+    commands:
+      - id: kafka options
+        task: kafka
+        short: Configuration options for the Kafka service
+        ready: cluster service options kafka-cluster
+        plain: >-
+          Show every setting the Kafka service accepts. Proves the service
+          exists in this build before anything tries to enable it.
+        metaphor: Read the catalogue entry before ordering the machine.
+
+      - id: kafka olm options
+        task: kafka
+        short: Configuration options for OLM
+        ready: cluster service options olm
+        plain: >-
+          Show what the operator lifecycle service accepts. It answers, but it
+          ships no descriptor and generates no files — worth knowing before
+          treating it as a dependency.
+        metaphor: Ask about the delivery service the catalogue mentions.
+
+      - id: kafka status before
+        task: kafka
+        short: Which services are on before enabling Kafka
+        ready: cluster service status --cluster {{ref}}
+        plain: Record what was already enabled, so the change can be attributed.
+        metaphor: Photograph the utilities schedule before altering it.
+
+      - id: kafka enable
+        task: kafka
+        short: Enable the Kafka service
+        ready: cluster service enable kafka-cluster --cluster {{ref}}
+        plain: Switch Kafka on in the cluster's configuration.
+        metaphor: Order the machine, and have it written into the plans.
+
+      - id: kafka validate
+        task: kafka
+        short: Does the configuration still hold with Kafka enabled
+        ready: cluster validate {{ref}}
+        plain: >-
+          Check the configuration is still coherent now Kafka is in it. Read
+          the service list, not the exit code: a fresh fixture already fails on
+          stub secrets in headlamp and keycloak, with or without Kafka. What
+          this proves is a tick beside kafka-cluster, and the passed count
+          going up by one.
+        metaphor: >-
+          Have the inspector read the plans again — and check the note about
+          your extension, not the ones about the neighbour's.
+
+      - id: kafka generate
+        task: kafka
+        short: Render the Kafka and Strimzi files
+        ready: cluster generate {{ref}} --render-only
+        plain: >-
+          Write the GitOps files out without touching a repository. Five
+          templates come from the Kafka descriptor: the Kafka resource, its
+          kustomization, the Strimzi source, and two Flux resources.
+        metaphor: Print the working drawings, without sending them to the site.
+
+      - id: kafka validate manifests
+        task: kafka
+        short: Validate the generated GitOps manifests
+        ready: cluster validate {{ref}} --manifests
+        plain: >-
+          Check what generation produced is valid. This is the flag that exists,
+          rather than a dry run, which `generate` does not offer. Same caveat as
+          above: on a fresh fixture this reports seven CHANGEME stub secrets in
+          headlamp, loki, openstack-ccm and tempo. None are Kafka's. Read the
+          file names in the errors before believing Kafka broke something.
+        metaphor: Check the printed drawings, and whose part of them is at fault.
+
+      - id: kafka status after
+        task: kafka
+        short: Which services are on after enabling Kafka
+        ready: cluster service status --cluster {{ref}}
+        plain: Confirm Kafka is recorded as enabled and nothing else moved.
+        metaphor: Compare the utilities schedule with the photograph.
+
+      - id: kafka disable
+        task: kafka
+        short: Disable the Kafka service again
+        ready: cluster service disable kafka-cluster --cluster {{ref}}
+        plain: >-
+          Switch it back off, leaving the configuration as it was before this
+          stage ran.
+        metaphor: Cancel the order, and leave the site as you found it.

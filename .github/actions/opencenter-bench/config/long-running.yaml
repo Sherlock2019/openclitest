@@ -1,0 +1,37 @@
+# Commands that never return, by design.
+#
+# A foreground scheduler is not a command that failed to finish — it is a
+# command that is doing its job. The bench used to wait out the full timeout on
+# each of these and then report a timeout, which reads as a fault and is not
+# one:
+#
+#   opencenter cluster backup schedule
+#     "runs as a foreground interval scheduler ... keeps running until
+#      interrupted."
+#
+# Neither offers a one-shot flag. `--interval` and `--retention` change how
+# often it acts, not whether it returns, so there is no invocation that both
+# exercises the command and terminates.
+#
+# So the bench gives them a short leash instead. It starts them, waits long
+# enough to see whether they got past their own setup, stops them, and reports
+# what happened. Starting cleanly is the result; anything else is the finding.
+#
+# `expect` is a string the startup output must contain for the run to count as
+# a pass. Without it a command that crashed in under the grace period would be
+# indistinguishable from one that started correctly.
+
+grace_seconds: 6
+
+commands:
+  - id: cluster drift schedule
+    why: >-
+      Sets up periodic drift detection and stays in the foreground reporting
+      it. Returns only when interrupted.
+    expect: drift
+
+  - id: cluster backup schedule
+    why: >-
+      Creates a backup on each interval tick and prunes old ones, in the
+      foreground, until interrupted.
+    expect: Scheduling backups

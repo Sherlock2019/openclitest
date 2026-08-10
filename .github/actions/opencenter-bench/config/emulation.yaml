@@ -1,0 +1,161 @@
+# Environment modes, and what each one actually proves.
+#
+# The honest description of emulated mode is narrow, and the wording here is
+# the narrow one on purpose. It does not simulate OpenStack. It runs the real
+# CLI with no provider credentials, no provider endpoint and a synthetic
+# identity, so every command that depends only on local code — parsing,
+# schema, defaults, templates, generation — runs exactly as it really would,
+# and every command that needs a provider fails honestly instead of being
+# faked into passing.
+#
+# That is a genuinely useful thing and a genuinely limited one. The warning
+# text below says both, and the page shows it before anything can be run
+# rather than hiding it in a tooltip.
+
+modes:
+  - id: real
+    name: Real environment
+    detail: Uses actual provider credentials and endpoints.
+    badge: REAL
+    emulated: false
+
+  - id: kind
+    name: Local Kind environment
+    detail: A real Kubernetes cluster in containers on this machine.
+    badge: KIND
+    emulated: false
+
+  - id: emulated
+    name: Emulated provider environment
+    detail: >-
+      The real CLI, with no provider credentials and no provider contacted.
+      Proves configuration, validation and generation; proves nothing about a
+      real cloud.
+    badge: EMULATED
+    emulated: true
+
+# There was a fourth mode, "Configuration only", and it is gone.
+#
+# It described itself as "parsing, validation and generation" — which is
+# exactly what emulated mode does, because emulated mode is the CLI with no
+# credentials and no endpoint. The only difference in the code was that
+# config-only blocked a slightly longer list of commands, and both blocked
+# every mutating one anyway.
+#
+# Two options that do the same thing under different names is not a choice, it
+# is a question the reader has to answer before they can start, with no way to
+# answer it correctly. Removed.
+
+# The persona an emulated run adopts. It changes the provider written into the
+# configuration and nothing else — there is no simulated API behind it.
+providers:
+  - id: openstack
+    name: OpenStack
+  - id: vmware
+    name: VMware
+  - id: baremetal
+    name: Bare metal
+
+# Scenarios set environment variables the CLI reads. They do not intercept
+# provider calls, because nothing here intercepts provider calls.
+scenarios:
+  - id: happy-path
+    name: Happy path
+    detail: A complete, valid configuration. Nothing is made to fail.
+    env: {}
+
+  - id: missing-credentials
+    name: Missing credentials
+    detail: >-
+      No credentials at all. Shows how the CLI reports a provider it cannot
+      reach, which is the most common real failure.
+    env:
+      OS_CLOUD: ""
+      OS_AUTH_URL: ""
+
+  - id: missing-network
+    name: Missing network identifiers
+    detail: >-
+      Credentials present, network and subnet blank. Exercises the validation
+      that should catch this before a deployment starts.
+    env:
+      OPENCLI_NETWORK_ID: ""
+      OPENCLI_SUBNET_ID: ""
+
+  - id: stub-secrets
+    name: Unfilled secrets
+    detail: >-
+      The fixture keeps its CHANGEME placeholders. Exercises the secret policy
+      that should refuse them.
+    env:
+      OPENCLI_KEEP_STUB_SECRETS: "1"
+
+# Shown before an emulated run can start, and repeated in the report.
+warning:
+  title: Emulation limitations
+  lead: >-
+    This mode tests openCenter against a machine with no provider credentials
+    and no provider endpoint. It is reliable for CLI logic, configuration,
+    validation and generation. It does not certify a real cloud environment.
+  facts:
+    - label: Provider API contacted
+      value: "No"
+    - label: Real infrastructure created
+      value: "No"
+    - label: Real provider certification
+      value: "No"
+  acknowledgement: >-
+    I understand this is an emulated provider test and not an OpenStack,
+    VMware or bare-metal certification.
+
+  reliable:
+    - cluster init, configure, validate and generate
+    - service enable, disable and options
+    - output formats and exit codes
+    - error handling and messages
+    - configuration files and schema validation
+    - secret redaction
+    - idempotency
+    - generated OpenTofu, Kubespray, Flux and Kustomize files
+
+  not_proven:
+    - label: Authentication
+      why: Real Keystone, vCenter, SSH and BMC policies differ from an absent one.
+    - label: Quotas
+      why: A project's real limits cannot be inferred without the project.
+    - label: Networking
+      why: VLANs, routers, floating IPs and security groups vary per cloud.
+    - label: Storage
+      why: Cinder, datastores and CSI drivers behave differently in practice.
+    - label: Images and flavors
+      why: Real identifiers, formats and boot behaviour may not match.
+    - label: Permissions
+      why: A real account may lack roles this run never had to hold.
+    - label: Performance
+      why: Nothing here represents production timing.
+    - label: Cleanup
+      why: Real orphaned resources cannot be produced without real resources.
+
+  confidence:
+    - area: CLI parsing and flags
+      level: high
+    - area: Configuration validation
+      level: high
+    - area: Template generation
+      level: high
+    - area: Secret redaction
+      level: high
+    - area: Error classification
+      level: high
+    - area: Kubernetes runtime
+      level: kind-only
+    - area: Provider API behaviour
+      level: none
+    - area: Cloud networking
+      level: none
+    - area: Cloud storage
+      level: none
+    - area: Real permissions and quotas
+      level: none
+    - area: Production certification
+      level: none

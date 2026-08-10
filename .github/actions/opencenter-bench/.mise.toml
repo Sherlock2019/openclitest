@@ -1,0 +1,118 @@
+# Thin wrappers. Every task below shells into a binary or into a script that is
+# already here — nothing reimplements a phase, so `mise run e2e-kind` and the
+# GitHub Actions job execute the same code.
+#
+# This file did not exist before the lifecycle arrived, and the brief asks for
+# two things it is the answer to: build openCenter-cli with mise, and document
+# the manual path as mise tasks. It does not replace scripts/; where a script
+# already does the work, the task calls it. Two build paths that drift is the
+# failure this whole design exists to avoid.
+
+[tools]
+# The version the openCenter CLI repository pins. Building the CLI under test
+# with a different Go than its own .mise.toml specifies would test a binary
+# nobody ships.
+golang = "1.26.5"
+
+[env]
+OPENCLI_E2E_REPORT_DIR = "artifacts"
+
+# --- building --------------------------------------------------------------
+
+[tasks.build]
+description = "Build every binary: the console, the command bench, the lifecycle"
+run = """
+mkdir -p bin
+go build -o bin/testlab ./cmd/testlab
+go build -o bin/bench ./cmd/bench
+go build -o bin/opencenter-e2e ./cmd/opencenter-e2e
+"""
+
+[tasks.test]
+description = "Unit tests"
+run = "go test ./..."
+
+[tasks.check]
+description = "Format, vet, build and render-check the console"
+run = "bash scripts/check.sh"
+
+[tasks.console]
+description = "Build and open the test bench console — the lifecycle lives in it"
+depends = ["build"]
+run = "./bin/testlab"
+
+# --- the cluster lifecycle -------------------------------------------------
+#
+# Every task here is one invocation of one binary. The GitHub Actions workflow
+# calls the same one with --execution-channel github-actions, and nothing else
+# differs: same phases, same assertions, same evidence.
+
+[tasks.e2e-plan]
+description = "Show what a run would do, without running it (PROFILE=…)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e plan --profile ${PROFILE:-kind}"
+
+[tasks.e2e]
+description = "Run the lifecycle for PROFILE (default kind)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e run --profile ${PROFILE:-kind} --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-safe]
+description = "Generate and validate only — creates nothing, needs no credentials"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e run --profile configuration-only --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-kind]
+description = "Full lifecycle against local Kubernetes"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e run --profile kind --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-emulated]
+description = "Emulated provider (PROVIDER=openstack|vmware|baremetal)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e run --profile ${PROVIDER:-openstack}-emulated --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-simulate]
+# Never PASS. SIMULATED (exit 4) when nothing failed for real; FAIL (exit 2)
+# when one of the phases that still runs for real failed inside it — which an
+# emulated profile with no reachable provider will do at validate-config.
+description = "Exercise every phase against a built-in fake. Never PASS: SIMULATED, or FAIL"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e run --profile ${PROFILE:-openstack-emulated} --simulate --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+# --- troubleshooting one part ----------------------------------------------
+#
+# The brief asks for rerunning individual phases. These are how, and they all
+# need RUN_ID because they act on a run that already exists.
+
+[tasks.e2e-phase]
+description = "Rerun one phase against an existing run (RUN_ID=… PHASE=…)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e phase --run-id ${RUN_ID} --only-phase ${PHASE} --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-resume]
+description = "Resume a failed run from where it stopped (RUN_ID=…)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e resume --run-id ${RUN_ID} --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-diagnose]
+description = "Collect diagnostics from an existing run (RUN_ID=…)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e diagnose --run-id ${RUN_ID} --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+[tasks.e2e-cleanup]
+description = "Destroy and prove cleanup for a run that left something behind (RUN_ID=…)"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e cleanup --run-id ${RUN_ID} --report-dir ${OPENCLI_E2E_REPORT_DIR}"
+
+# --- the catalogue ---------------------------------------------------------
+
+[tasks.profiles]
+description = "List the profiles and what each one needs"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e profiles"
+
+[tasks.phases]
+description = "List the lifecycle phases, in order"
+depends = ["build"]
+run = "./bin/opencenter-e2e e2e phases"

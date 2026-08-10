@@ -1,0 +1,35 @@
+# What must not go into the image.
+#
+# The build stage does COPY . ., so anything not excluded here is baked into a
+# layer — and a layer is readable by anyone who can pull the image, whatever the
+# final stage does afterwards.
+
+# Previous runs. These hold evidence, redacted credential reports and sandbox
+# homes from real runs against real clouds. Nothing about them belongs in a
+# published image, and they are the largest thing in the tree.
+artifacts/
+bin/
+
+# History, including every secret ever committed and reverted.
+.git/
+.github/
+
+# Local configuration that would otherwise override what a user mounts.
+.env
+*.local.yaml
+credentials.json
+*.pem
+*.key
+id_rsa*
+
+# Noise: nothing here affects the build.
+*.log
+*.md
+docs/
+examples/
+.vscode/
+.idea/
+node_modules/
+__pycache__/
+Dockerfile
+.dockerignore
